@@ -24,7 +24,7 @@
 
 ## 技术栈与版本
 
-- C++，Qt 6.2+（Qt Creator 工程，qmake `.pro`）
+- C++，Qt 5.15 / Qt 6.2 双兼容（Qt Creator 工程，qmake `.pro`）。说明书要求的「Qt Creator 6.2+」指 IDE 版本；课程虚拟机（Ubuntu 22.04）apt 源中 QtCharts 仅 Qt 5.15 提供，Qt 6.2.4 不含 QtCharts，因此 `.pro` 中用 `qtHaveModule(charts)` 条件链接，代码不得依赖仅单一版本存在的 API。
 - 依赖限定：Qt 自带模块（QtNetwork、QtSql、QtCharts、QtWebEngineWidgets）与 SQLite。**引入任何第三方库前先与团队确认**。
 - 目标运行环境：Ubuntu 22.04（x86_64 虚拟机），代码不得依赖 macOS/Windows 专有特性。
 

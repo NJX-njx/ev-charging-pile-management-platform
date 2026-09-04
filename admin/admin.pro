@@ -1,4 +1,7 @@
-QT += core gui widgets network charts
+QT += core gui widgets network
+
+# QtCharts 在 Ubuntu 22.04 仅 Qt5 可用；Qt6 环境下自动跳过（营收趋势页开发时需要）
+qtHaveModule(charts): QT += charts
 
 CONFIG += c++17
 
