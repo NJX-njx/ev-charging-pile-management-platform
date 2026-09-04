@@ -39,3 +39,11 @@ Desktop.ini
 # Windows qmake 非影子构建产物
 debug/
 release/
+
+# SQLite 数据库与 WAL 文件
+*.db
+*.db-wal
+*.db-shm
+
+# server 模块构建出的可执行文件
+/server/server
