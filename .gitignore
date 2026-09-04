@@ -1,0 +1,34 @@
+# C/C++ 编译产物
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+*.dll
+*.exe
+*.out
+core
+*.core
+
+# qmake / Qt Creator
+Makefile
+Makefile.*
+.qmake.stash
+*.pro.user
+*.pro.user.*
+*.autosave
+moc_*.cpp
+moc_*.h
+moc_*.mm
+ui_*.h
+qrc_*.cpp
+
+# 构建目录
+build/
+build-*/
+*-build-*/
+
+# IDE / 系统
+.vscode/
+.idea/
+.DS_Store
