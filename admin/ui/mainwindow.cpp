@@ -3,6 +3,8 @@
 
 #include <QLabel>
 
+#include "salespage.h"
+
 MainWindow::MainWindow(SocketClient *client, QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MainWindow), m_client(client)
 {
@@ -17,15 +19,23 @@ MainWindow::MainWindow(SocketClient *client, QWidget *parent)
     };
 
     ui->listWidgetNav->addItems(modules);
-    for (const QString &name : modules) {
-        QLabel *page = new QLabel(QStringLiteral("「%1」页面待开发").arg(name));
+
+    SalesPage *salesPage = new SalesPage(m_client);
+    ui->stackedWidget->addWidget(salesPage);
+    for (int i = 1; i < modules.size(); ++i) {
+        QLabel *page = new QLabel(QStringLiteral("「%1」页面待开发").arg(modules.at(i)));
         page->setAlignment(Qt::AlignCenter);
         ui->stackedWidget->addWidget(page);
     }
 
-    connect(ui->listWidgetNav, &QListWidget::currentRowChanged,
-            ui->stackedWidget, &QStackedWidget::setCurrentIndex);
+    connect(ui->listWidgetNav, &QListWidget::currentRowChanged, this,
+            [this, salesPage](int row) {
+                ui->stackedWidget->setCurrentIndex(row);
+                if (row == 0)
+                    salesPage->refresh();
+            });
     ui->listWidgetNav->setCurrentRow(0);
+    salesPage->refresh();
 }
 
 MainWindow::~MainWindow()

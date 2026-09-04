@@ -12,12 +12,14 @@ SOURCES += \
     main.cpp \
     net/socketclient.cpp \
     ui/loginwindow.cpp \
-    ui/mainwindow.cpp
+    ui/mainwindow.cpp \
+    ui/salespage.cpp
 
 HEADERS += \
     net/socketclient.h \
     ui/loginwindow.h \
-    ui/mainwindow.h
+    ui/mainwindow.h \
+    ui/salespage.h
 
 FORMS += \
     ui/loginwindow.ui \
