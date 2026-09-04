@@ -1,0 +1,22 @@
+# 跨平台协作：自动统一文本文件换行符（Windows CRLF / Unix LF）
+* text=auto
+
+# 源代码强制 LF 入库，避免 Windows 编辑器整文件转换造成无意义 diff
+*.cpp   text eol=lf
+*.h     text eol=lf
+*.pro   text eol=lf
+*.ui    text eol=lf
+*.md    text eol=lf
+*.py    text eol=lf
+*.json  text eol=lf
+
+# 二进制文件不做换行符转换
+*.doc   binary
+*.xls   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.icns  binary
+*.pdf   binary
