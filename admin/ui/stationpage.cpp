@@ -58,6 +58,9 @@ StationPage::StationPage(SocketClient *client, QWidget *parent)
     connect(refreshBtn, &QPushButton::clicked, this, &StationPage::refresh);
     connect(addBtn, &QPushButton::clicked, this, &StationPage::onAddStation);
     connect(pilesBtn, &QPushButton::clicked, this, &StationPage::onShowPiles);
+    connect(m_table, &QTableWidget::cellDoubleClicked, this, [this](int, int) {
+        onShowPiles();
+    });
 }
 
 void StationPage::refresh()

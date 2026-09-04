@@ -36,10 +36,10 @@ void LoginWindow::onLoginClicked()
     payload[QStringLiteral("password")] = password;
 
     m_client->sendRequest(QStringLiteral("admin_login"), payload,
-                          [this](int code, const QString &msg, const QJsonObject &) {
+                          [this, username, password](int code, const QString &msg, const QJsonObject &) {
                               ui->pushButtonLogin->setEnabled(true);
                               if (code == 0) {
-                                  MainWindow *w = new MainWindow(m_client);
+                                  MainWindow *w = new MainWindow(m_client, username, password);
                                   w->show();
                                   close();
                               } else {
