@@ -21,6 +21,7 @@
 3. JSON 字段命名统一 camelCase；消息以 `\n` 作为分包边界；编码 UTF-8。
 4. Qt 用户端与 Qt 管理端**不得直接访问数据库**，也不得互相直接通信，一切数据经 Socket 服务端中转。
 5. 服务端默认监听端口 `8888`，须支持通过启动参数覆盖。
+6. **界面视觉的唯一基准是 [docs/visual-design.md](docs/visual-design.md)**。颜色、字号只允许取自该文件色板；样式集中在 QSS（`*/resources/style.qss`，经 qrc 加载），禁止在代码中散落样式字面量。
 
 ## 技术栈与版本
 

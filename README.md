@@ -61,6 +61,8 @@ docs/     协议与设计文档
 
 Qt 用户端、Qt 管理端、Socket 服务端与 Web 数据大屏的统一通信协议见 [docs/protocol.md](docs/protocol.md)，各端开发以此为准，改动须同步更新文档。
 
+三端统一视觉语言见 [docs/visual-design.md](docs/visual-design.md)（色板、字号、布局与组件规范），界面实现以此为准。
+
 `docs/` 下同时收录原始需求资料：
 
 - [项目说明书](docs/01.项目说明书-东软电动汽车充电桩应用管理平台.doc)
