@@ -78,7 +78,6 @@ MainWindow::MainWindow(SocketClient *client, const QString &username, const QStr
                              : QStringLiteral("服务器：连接中…"));
 
     ui->listWidgetNav->setCurrentRow(0);
-    salesPage->refresh();
 }
 
 MainWindow::~MainWindow()

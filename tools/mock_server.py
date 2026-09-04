@@ -177,11 +177,18 @@ def handle(req):
     return err(3001, "未知消息类型: %s" % t)
 
 
+def _log(direction, seq, mtype, extra=""):
+    ts = datetime.datetime.now().strftime("%H:%M:%S")
+    print("[%s] %s seq=%s type=%s %s" % (ts, direction, seq, mtype, extra), flush=True)
+
+
 class Handler(socketserver.StreamRequestHandler):
     def handle(self):
+        _log("++", "-", "connect", self.client_address[0])
         while True:
             line = self.rfile.readline()
             if not line:
+                _log("--", "-", "disconnect", self.client_address[0])
                 return
             line = line.strip()
             if not line:
@@ -189,12 +196,15 @@ class Handler(socketserver.StreamRequestHandler):
             try:
                 req = json.loads(line.decode("utf-8"))
             except (ValueError, UnicodeDecodeError):
+                _log(">>", -1, "<unparseable>", line[:80])
                 resp = {"seq": -1, "type": "", "code": 3001,
                         "msg": "消息无法解析", "data": None}
             else:
+                _log(">>", req.get("seq", -1), req.get("type", ""), "")
                 code, msg, data = handle(req)
                 resp = {"seq": req.get("seq", -1), "type": req.get("type", ""),
                         "code": code, "msg": msg, "data": data}
+            _log("<<", resp["seq"], resp["type"], "code=%s" % resp["code"])
             self.wfile.write((json.dumps(resp, ensure_ascii=False) + "\n").encode("utf-8"))
 
 
