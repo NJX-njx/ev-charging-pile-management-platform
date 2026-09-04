@@ -59,7 +59,7 @@ docs/     协议与设计文档
 
 ## 通信协议
 
-管理端 ↔ 服务端的 JSON 消息协议见 [docs/protocol.md](docs/protocol.md)，双方开发以此为准，改动须同步更新文档。
+Qt 用户端、Qt 管理端、Socket 服务端与 Web 数据大屏的统一通信协议见 [docs/protocol.md](docs/protocol.md)，各端开发以此为准，改动须同步更新文档。
 
 `docs/` 下同时收录原始需求资料：
 
