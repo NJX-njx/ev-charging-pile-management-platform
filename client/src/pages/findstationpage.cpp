@@ -1,0 +1,382 @@
+#include "findstationpage.h"
+
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFrame>
+#include <QHBoxLayout>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QLabel>
+#include <QLineEdit>
+#include <QMessageBox>
+#include <QMouseEvent>
+#include <QPushButton>
+#include <QScrollArea>
+#include <QVBoxLayout>
+
+#include "map/mapbridge.h"
+#include "net/socketclient.h"
+#include "ui/uienums.h"
+
+namespace {
+
+class StationCard : public QFrame
+{
+    Q_OBJECT
+public:
+    explicit StationCard(const Station &station, QWidget *parent = nullptr)
+        : QFrame(parent)
+        , m_station(station)
+    {
+        setObjectName(QStringLiteral("stationCard"));
+        setCursor(Qt::PointingHandCursor);
+        auto *layout = new QVBoxLayout(this);
+        layout->setContentsMargins(16, 12, 16, 12);
+        layout->setSpacing(6);
+
+        auto *topRow = new QHBoxLayout();
+        auto *name = new QLabel(station.name, this);
+        name->setObjectName(QStringLiteral("cardTitle"));
+        topRow->addWidget(name, 1);
+        if (station.distanceKm >= 0) {
+            auto *dist = new QLabel(QStringLiteral("%1 km").arg(station.distanceKm, 0, 'f', 1), this);
+            dist->setObjectName(QStringLiteral("emphasis"));
+            topRow->addWidget(dist, 0);
+        }
+        layout->addLayout(topRow);
+
+        auto *addr = new QLabel(station.address, this);
+        addr->setObjectName(QStringLiteral("hint"));
+        layout->addWidget(addr);
+
+        auto *info = new QLabel(
+            QStringLiteral("电价 ¥%1/kWh · 空闲 %2/%3 桩 · 在线率 %4%")
+                .arg(station.pricePerKwh, 0, 'f', 2)
+                .arg(station.pileIdle)
+                .arg(station.pileTotal)
+                .arg(qRound(station.onlineRate * 100)),
+            this);
+        layout->addWidget(info);
+    }
+
+    Station station() const { return m_station; }
+
+signals:
+    void clicked();
+
+protected:
+    void mouseReleaseEvent(QMouseEvent *event) override
+    {
+        if (event->button() == Qt::LeftButton && rect().contains(event->pos()))
+            emit clicked();
+        QFrame::mouseReleaseEvent(event);
+    }
+
+private:
+    Station m_station;
+};
+
+} // namespace
+
+FindStationPage::FindStationPage(SocketClient *client, QWidget *parent)
+    : QWidget(parent)
+    , m_client(client)
+{
+    auto *root = new QVBoxLayout(this);
+    root->setContentsMargins(12, 12, 12, 12);
+    root->setSpacing(12);
+
+    auto *title = new QLabel(QStringLiteral("找站"), this);
+    title->setObjectName(QStringLiteral("pageTitle"));
+    root->addWidget(title);
+
+    auto *searchCard = new QFrame(this);
+    searchCard->setObjectName(QStringLiteral("card"));
+    auto *searchLayout = new QVBoxLayout(searchCard);
+    searchLayout->setContentsMargins(16, 12, 16, 12);
+    searchLayout->setSpacing(8);
+
+    auto *addrRow = new QHBoxLayout();
+    m_addressEdit = new QLineEdit(searchCard);
+    m_addressEdit->setPlaceholderText(QStringLiteral("输入区域或地址，如：沙河口区星海广场"));
+    m_geocodeButton = new QPushButton(QStringLiteral("解析地址"), searchCard);
+    m_geocodeButton->setProperty("class", QStringLiteral("small"));
+    addrRow->addWidget(m_addressEdit, 1);
+    addrRow->addWidget(m_geocodeButton, 0);
+    searchLayout->addLayout(addrRow);
+
+    if (!MapBridge::isConfigured()) {
+        auto *mapHint = new QLabel(QStringLiteral("未配置腾讯地图 Key，地址解析不可用，请手动输入经纬度"), searchCard);
+        mapHint->setObjectName(QStringLiteral("hint"));
+        mapHint->setWordWrap(true);
+        searchLayout->addWidget(mapHint);
+    }
+
+    auto *coordRow = new QHBoxLayout();
+    m_lngEdit = new QLineEdit(searchCard);
+    m_lngEdit->setPlaceholderText(QStringLiteral("经度 lng"));
+    m_latEdit = new QLineEdit(searchCard);
+    m_latEdit->setPlaceholderText(QStringLiteral("纬度 lat"));
+    m_searchButton = new QPushButton(QStringLiteral("查找附近站点"), searchCard);
+    m_searchButton->setProperty("class", QStringLiteral("smallPrimary"));
+    coordRow->addWidget(m_lngEdit, 1);
+    coordRow->addWidget(m_latEdit, 1);
+    coordRow->addWidget(m_searchButton, 0);
+    searchLayout->addLayout(coordRow);
+
+    root->addWidget(searchCard);
+
+    auto *listHeader = new QHBoxLayout();
+    auto *listTitle = new QLabel(QStringLiteral("附近站点"), this);
+    listTitle->setObjectName(QStringLiteral("cardTitle"));
+    m_refreshButton = new QPushButton(QStringLiteral("刷新"), this);
+    m_refreshButton->setProperty("class", QStringLiteral("small"));
+    listHeader->addWidget(listTitle, 1);
+    listHeader->addWidget(m_refreshButton, 0);
+    root->addLayout(listHeader);
+
+    auto *scroll = new QScrollArea(this);
+    scroll->setWidgetResizable(true);
+    m_listContainer = new QWidget(scroll);
+    m_listLayout = new QVBoxLayout(m_listContainer);
+    m_listLayout->setContentsMargins(0, 0, 0, 0);
+    m_listLayout->setSpacing(12);
+    m_emptyHint = new QLabel(QStringLiteral("输入地址或经纬度后查找附近站点"), m_listContainer);
+    m_emptyHint->setObjectName(QStringLiteral("hint"));
+    m_emptyHint->setAlignment(Qt::AlignHCenter);
+    m_listLayout->addWidget(m_emptyHint);
+    m_listLayout->addStretch(1);
+    scroll->setWidget(m_listContainer);
+    root->addWidget(scroll, 1);
+
+    connect(m_geocodeButton, &QPushButton::clicked, this, &FindStationPage::onGeocodeClicked);
+    connect(m_searchButton, &QPushButton::clicked, this, &FindStationPage::onSearchClicked);
+    connect(m_refreshButton, &QPushButton::clicked, this, &FindStationPage::onRefreshClicked);
+}
+
+void FindStationPage::onGeocodeClicked()
+{
+    const QString address = m_addressEdit->text().trimmed();
+    if (address.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("解析地址"), QStringLiteral("请输入区域或地址"));
+        return;
+    }
+    if (!MapBridge::isConfigured()) {
+        QMessageBox::warning(this, QStringLiteral("解析地址"),
+                             QStringLiteral("未配置腾讯地图 Key，请改用手动经纬度输入"));
+        return;
+    }
+    if (!m_map)
+        m_map = new MapBridge(this);
+    setBusy(true);
+    m_map->geocode(address, [this](bool ok, double lng, double lat, const QString &error) {
+        setBusy(false);
+        if (!ok) {
+            QMessageBox::warning(this, QStringLiteral("解析地址"), error);
+            return;
+        }
+        m_lngEdit->setText(QString::number(lng, 'f', 6));
+        m_latEdit->setText(QString::number(lat, 'f', 6));
+        searchNearby(lng, lat);
+    });
+}
+
+void FindStationPage::onSearchClicked()
+{
+    bool okLng = false;
+    bool okLat = false;
+    const double lng = m_lngEdit->text().trimmed().toDouble(&okLng);
+    const double lat = m_latEdit->text().trimmed().toDouble(&okLat);
+    if (!okLng || !okLat || lng < -180 || lng > 180 || lat < -90 || lat > 90) {
+        QMessageBox::warning(this, QStringLiteral("查找附近站点"),
+                             QStringLiteral("请输入正确的经纬度（经度 -180~180，纬度 -90~90）"));
+        return;
+    }
+    searchNearby(lng, lat);
+}
+
+void FindStationPage::onRefreshClicked()
+{
+    if (!m_hasLastCoord) {
+        QMessageBox::information(this, QStringLiteral("刷新"), QStringLiteral("请先查找附近站点"));
+        return;
+    }
+    searchNearby(m_lastLng, m_lastLat);
+}
+
+void FindStationPage::searchNearby(double lng, double lat)
+{
+    setBusy(true);
+    m_client->sendRequest(QStringLiteral("nearby_station_list"),
+                          QJsonObject{{QStringLiteral("lng"), lng},
+                                      {QStringLiteral("lat"), lat},
+                                      {QStringLiteral("limit"), 50}},
+                          [this, lng, lat](int code, const QString &msg, const QJsonObject &data) {
+                              setBusy(false);
+                              if (code != 0) {
+                                  if (code != SocketClient::kErrConnectionLost)
+                                      QMessageBox::warning(this, QStringLiteral("查找附近站点"), msg);
+                                  else
+                                      QMessageBox::warning(this, QStringLiteral("查找附近站点"),
+                                                           QStringLiteral("网络中断，请稍后重试"));
+                                  return;
+                              }
+                              m_hasLastCoord = true;
+                              m_lastLng = lng;
+                              m_lastLat = lat;
+                              QList<Station> stations;
+                              const QJsonArray arr = data.value(QStringLiteral("stations")).toArray();
+                              stations.reserve(arr.size());
+                              for (const QJsonValue &v : arr)
+                                  stations.append(Station::fromJson(v.toObject()));
+                              renderStations(stations);
+                          });
+}
+
+void FindStationPage::renderStations(const QList<Station> &stations)
+{
+    while (QLayoutItem *item = m_listLayout->takeAt(0)) {
+        if (QWidget *w = item->widget())
+            w->deleteLater();
+        delete item;
+    }
+    if (stations.isEmpty()) {
+        auto *hint = new QLabel(QStringLiteral("附近暂无站点"), m_listContainer);
+        hint->setObjectName(QStringLiteral("hint"));
+        hint->setAlignment(Qt::AlignHCenter);
+        m_listLayout->addWidget(hint);
+    }
+    for (const Station &s : stations) {
+        auto *card = new StationCard(s, m_listContainer);
+        connect(card, &StationCard::clicked, this, [this, s]() {
+            showStationDetail(s);
+        });
+        m_listLayout->addWidget(card);
+    }
+    m_listLayout->addStretch(1);
+}
+
+void FindStationPage::showStationDetail(const Station &station)
+{
+    m_client->sendRequest(QStringLiteral("station_detail"),
+                          QJsonObject{{QStringLiteral("stationId"), static_cast<double>(station.stationId)}},
+                          [this, station](int code, const QString &msg, const QJsonObject &data) {
+                              if (code != 0) {
+                                  QMessageBox::warning(this, QStringLiteral("站点详情"),
+                                                       msg.isEmpty() ? QStringLiteral("查询失败") : msg);
+                                  return;
+                              }
+                              const Station detail = Station::fromJson(
+                                  data.value(QStringLiteral("station")).toObject());
+                              QList<Pile> piles;
+                              const QJsonArray arr = data.value(QStringLiteral("piles")).toArray();
+                              for (const QJsonValue &v : arr)
+                                  piles.append(Pile::fromJson(v.toObject()));
+
+                              auto *dialog = new QDialog(this);
+                              dialog->setAttribute(Qt::WA_DeleteOnClose);
+                              dialog->setWindowTitle(detail.name);
+                              auto *dlgLayout = new QVBoxLayout(dialog);
+                              dlgLayout->setContentsMargins(16, 16, 16, 16);
+                              dlgLayout->setSpacing(8);
+
+                              auto *info = new QLabel(
+                                  QStringLiteral("%1\n电价 ¥%2/kWh · 空闲 %3/%4 桩 · 在线率 %5%")
+                                      .arg(detail.address)
+                                      .arg(detail.pricePerKwh, 0, 'f', 2)
+                                      .arg(detail.pileIdle)
+                                      .arg(detail.pileTotal)
+                                      .arg(qRound(detail.onlineRate * 100)),
+                                  dialog);
+                              info->setObjectName(QStringLiteral("hint"));
+                              dlgLayout->addWidget(info);
+
+                              auto *divider = new QFrame(dialog);
+                              divider->setObjectName(QStringLiteral("divider"));
+                              dlgLayout->addWidget(divider);
+
+                              auto *scroll = new QScrollArea(dialog);
+                              scroll->setWidgetResizable(true);
+                              auto *container = new QWidget(scroll);
+                              auto *pilesLayout = new QVBoxLayout(container);
+                              pilesLayout->setContentsMargins(0, 0, 0, 0);
+                              pilesLayout->setSpacing(8);
+                              if (piles.isEmpty()) {
+                                  auto *hint = new QLabel(QStringLiteral("该站点暂无电桩"), container);
+                                  hint->setObjectName(QStringLiteral("hint"));
+                                  pilesLayout->addWidget(hint);
+                              }
+                              for (const Pile &p : piles) {
+                                  auto *row = new QFrame(container);
+                                  row->setObjectName(QStringLiteral("card"));
+                                  auto *rowLayout = new QHBoxLayout(row);
+                                  rowLayout->setContentsMargins(12, 8, 12, 8);
+                                  auto *codeLabel = new QLabel(
+                                      QStringLiteral("%1 · %2 · %3kW")
+                                          .arg(p.code, ui::pileTypeText(p.type))
+                                          .arg(p.powerKw, 0, 'f', 0),
+                                      row);
+                                  rowLayout->addWidget(codeLabel, 1);
+                                  auto *statusLabel = new QLabel(ui::pileStatusText(p.status), row);
+                                  ui::setState(statusLabel, p.status);
+                                  rowLayout->addWidget(statusLabel, 0);
+                                  if (p.status == QLatin1String("idle")) {
+                                      auto *reserveBtn = new QPushButton(QStringLiteral("预约"), row);
+                                      reserveBtn->setProperty("class", QStringLiteral("smallPrimary"));
+                                      connect(reserveBtn, &QPushButton::clicked, this,
+                                              [this, p, dialog]() {
+                                                  reservePile(p.pileId, p.code, dialog);
+                                              });
+                                      rowLayout->addWidget(reserveBtn, 0);
+                                  }
+                                  pilesLayout->addWidget(row);
+                              }
+                              pilesLayout->addStretch(1);
+                              scroll->setWidget(container);
+                              dlgLayout->addWidget(scroll, 1);
+
+                              auto *closeBtn = new QPushButton(QStringLiteral("关闭"), dialog);
+                              connect(closeBtn, &QPushButton::clicked, dialog, &QDialog::accept);
+                              dlgLayout->addWidget(closeBtn);
+                              dialog->resize(340, 420);
+                              dialog->exec();
+                          });
+}
+
+void FindStationPage::reservePile(qint64 pileId, const QString &pileCode, QDialog *dialog)
+{
+    const QList<QPushButton *> buttons = dialog->findChildren<QPushButton *>();
+    for (QPushButton *b : buttons)
+        b->setEnabled(false);
+    m_client->sendRequest(QStringLiteral("charge_reserve"),
+                          QJsonObject{{QStringLiteral("pileId"), static_cast<double>(pileId)}},
+                          [this, dialog, pileCode](int code, const QString &msg, const QJsonObject &) {
+                              if (code == 0) {
+                                  QMessageBox::information(dialog, QStringLiteral("预约"),
+                                                           QStringLiteral("电桩 %1 预约成功").arg(pileCode));
+                                  dialog->accept();
+                                  emit orderStateDirty();
+                                  return;
+                              }
+                              if (code == SocketClient::kErrConnectionLost) {
+                                  QMessageBox::warning(dialog, QStringLiteral("预约"),
+                                                       QStringLiteral("网络中断，预约结果未知，请在充电页确认订单状态"));
+                                  dialog->accept();
+                                  emit orderStateDirty();
+                                  return;
+                              }
+                              for (QPushButton *b : dialog->findChildren<QPushButton *>())
+                                  b->setEnabled(true);
+                              QMessageBox::warning(dialog, QStringLiteral("预约"),
+                                                   msg.isEmpty() ? QStringLiteral("预约失败") : msg);
+                          });
+}
+
+void FindStationPage::setBusy(bool busy)
+{
+    m_geocodeButton->setEnabled(busy ? false : true);
+    m_searchButton->setEnabled(!busy);
+    m_refreshButton->setEnabled(!busy);
+}
+
+#include "findstationpage.moc"

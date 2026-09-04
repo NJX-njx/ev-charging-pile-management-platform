@@ -1,0 +1,5 @@
+# 就地构建生成的可执行文件（Linux/macOS 名为 client，Windows 为 client.exe 已由根 .gitignore 覆盖）
+/client
+
+# qmake 为 .cpp 内 Q_OBJECT 类生成的 moc 产物（根 .gitignore 只覆盖 moc_*.cpp）
+*.moc

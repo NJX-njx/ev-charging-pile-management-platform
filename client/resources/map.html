@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>evcp-map</title>
+</head>
+<body>
+<script>
+function report(obj) {
+    document.title = "EVCP_GEOCODE:" + JSON.stringify(obj);
+}
+
+// 地址解析走腾讯 WebService（JSONP），不依赖 qq.maps JS SDK：
+// 本 Key 仅授权 WebServiceAPI，经典 JS API 的 Geocoder 返回 status=113 未授权。
+function geocodeAddress(args) {
+    var cbName = "__evcpGeocodeCb";
+    window[cbName] = function (obj) {
+        window[cbName] = undefined;
+        if (obj && obj.status === 0 && obj.result && obj.result.location) {
+            report({ ok: true, lng: obj.result.location.lng, lat: obj.result.location.lat });
+        } else {
+            var st = obj ? obj.status : "no-response";
+            var msg = (obj && obj.message) ? obj.message : "";
+            report({ ok: false, error: "webservice status=" + st + " " + msg });
+        }
+    };
+    var s = document.createElement("script");
+    s.onerror = function () {
+        report({ ok: false, error: "webservice request failed" });
+    };
+    s.src = "https://apis.map.qq.com/ws/geocoder/v1/?address=" + encodeURIComponent(args[0])
+        + "&key=__TENCENT_MAP_KEY__&output=jsonp&callback=" + cbName;
+    document.body.appendChild(s);
+}
+
+report({ ready: true });
+</script>
+</body>
+</html>

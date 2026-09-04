@@ -1,0 +1,216 @@
+/* 东软电动汽车充电桩应用管理平台 - Qt 用户端样式
+   颜色与字号基准：docs/visual-design.md 色板，禁止引入板外色值。 */
+
+* {
+    font-family: "Noto Sans CJK SC", "Microsoft YaHei", "PingFang SC", sans-serif;
+    font-size: 13px;
+    color: #1F2329;
+    outline: none;
+}
+
+QMainWindow, QWidget#centralRoot, QDialog {
+    background: #F5F6F7;
+}
+
+/* ---------- 文本 ---------- */
+QLabel#pageTitle {
+    font-size: 18px;
+    font-weight: bold;
+}
+
+QLabel#cardTitle {
+    font-size: 14px;
+    font-weight: bold;
+}
+
+QLabel#hint {
+    font-size: 12px;
+    color: #6B7280;
+}
+
+QLabel#metric {
+    font-size: 26px;
+    font-weight: bold;
+    color: #00A870;
+}
+
+QLabel#emphasis {
+    font-weight: bold;
+    color: #00A870;
+}
+
+QLabel#banner {
+    background: #ED6C02;
+    color: #FFFFFF;
+    font-size: 12px;
+    padding: 4px 8px;
+}
+
+/* 状态着色文字（语义色映射，与 visual-design.md 2.3 一致） */
+QLabel[kind="status"] {
+    font-weight: bold;
+}
+QLabel[state="idle"], QLabel[state="normal"], QLabel[state="completed"] {
+    color: #2E7D32;
+}
+QLabel[state="in_use"], QLabel[state="charging"] {
+    color: #1565C0;
+}
+QLabel[state="fault"], QLabel[state="frozen"] {
+    color: #C62828;
+}
+QLabel[state="reserved"], QLabel[state="pending_payment"] {
+    color: #ED6C02;
+}
+QLabel[state="cancelled"] {
+    color: #6B7280;
+}
+
+/* ---------- 卡片 ---------- */
+QFrame#card, QFrame#stationCard {
+    background: #FFFFFF;
+    border: 1px solid #E0E3E6;
+    border-radius: 8px;
+}
+
+QFrame#stationCard:hover {
+    border: 1px solid #00A870;
+}
+
+/* ---------- 按钮 ---------- */
+QPushButton {
+    background: #FFFFFF;
+    border: 1px solid #E0E3E6;
+    border-radius: 6px;
+    color: #1F2329;
+    min-height: 32px;
+    padding: 0 12px;
+}
+QPushButton:pressed {
+    background: #F0F2F4;
+}
+QPushButton:disabled {
+    color: #6B7280;
+    background: #F5F6F7;
+}
+
+QPushButton[class="primary"] {
+    background: #00A870;
+    border: none;
+    border-radius: 8px;
+    color: #FFFFFF;
+    font-size: 14px;
+    font-weight: bold;
+    min-height: 44px;
+}
+QPushButton[class="primary"]:pressed {
+    background: #00875C;
+}
+QPushButton[class="primary"]:disabled {
+    background: #E3F6EF;
+    color: #6B7280;
+}
+
+QPushButton[class="small"] {
+    min-height: 28px;
+    padding: 0 10px;
+    font-size: 12px;
+}
+QPushButton[class="smallPrimary"] {
+    background: #00A870;
+    border: none;
+    border-radius: 6px;
+    color: #FFFFFF;
+    min-height: 28px;
+    padding: 0 10px;
+    font-size: 12px;
+}
+QPushButton[class="smallPrimary"]:pressed {
+    background: #00875C;
+}
+QPushButton[class="smallPrimary"]:disabled {
+    background: #E3F6EF;
+    color: #6B7280;
+}
+
+/* ---------- 底部 Tab ---------- */
+QWidget#tabBar {
+    background: #FFFFFF;
+    border-top: 1px solid #E0E3E6;
+}
+QPushButton#tabButton {
+    background: transparent;
+    border: none;
+    border-top: 2px solid transparent;
+    border-radius: 0;
+    color: #6B7280;
+    font-size: 14px;
+    min-height: 48px;
+}
+QPushButton#tabButton:checked {
+    color: #00A870;
+    font-weight: bold;
+    border-top: 2px solid #00A870;
+    background: #E3F6EF;
+}
+
+/* ---------- 输入框 ---------- */
+QLineEdit {
+    background: #FFFFFF;
+    border: 1px solid #E0E3E6;
+    border-radius: 6px;
+    min-height: 32px;
+    padding: 0 8px;
+    selection-background-color: #00A870;
+}
+QLineEdit:focus {
+    border: 1px solid #00A870;
+}
+QLineEdit:disabled {
+    background: #F5F6F7;
+    color: #6B7280;
+}
+
+/* ---------- 滚动区 ---------- */
+QScrollArea {
+    background: transparent;
+    border: none;
+}
+QScrollArea > QWidget > QWidget {
+    background: transparent;
+}
+QScrollBar:vertical {
+    background: transparent;
+    width: 8px;
+    margin: 0;
+}
+QScrollBar::handle:vertical {
+    background: #E0E3E6;
+    border-radius: 4px;
+    min-height: 24px;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
+}
+
+/* ---------- 分隔与头像 ---------- */
+QFrame#divider {
+    background: #E0E3E6;
+    max-height: 1px;
+}
+
+QLabel#avatar {
+    background: #E3F6EF;
+    border-radius: 8px;
+    color: #00A870;
+    font-size: 18px;
+    font-weight: bold;
+}
+
+/* ---------- 对话框 ---------- */
+QMessageBox QLabel {
+    font-size: 13px;
+}
+QMessageBox QPushButton {
+    min-width: 72px;
+}
