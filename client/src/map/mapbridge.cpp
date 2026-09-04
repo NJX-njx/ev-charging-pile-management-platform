@@ -95,13 +95,17 @@ void MapBridge::ensurePage()
             return;
         GeocodeCallback cb = std::move(m_cb);
         m_cb = nullptr;
-        const QString addr = m_pendingAddress;
         m_pendingAddress.clear();
         if (obj.value(QStringLiteral("ok")).toBool())
             cb(true, obj.value(QStringLiteral("lng")).toDouble(),
                obj.value(QStringLiteral("lat")).toDouble(), QString());
-        else
-            cb(false, 0, 0, QStringLiteral("地址解析失败，请换更详细的地址或手动输入经纬度"));
+        else {
+            const QString detail = obj.value(QStringLiteral("error")).toString();
+            cb(false, 0, 0,
+               detail.isEmpty()
+                   ? QStringLiteral("地址解析失败，请换更详细的地址或手动输入经纬度")
+                   : QStringLiteral("地址解析失败：%1").arg(detail));
+        }
     });
     m_page->setHtml(html, QUrl(QStringLiteral("https://map.qq.com/")));
 #else

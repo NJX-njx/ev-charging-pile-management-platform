@@ -6,53 +6,34 @@
 </head>
 <body>
 <script>
-var geocoder = null;
-
 function report(obj) {
     document.title = "EVCP_GEOCODE:" + JSON.stringify(obj);
 }
 
-function initGeocoder() {
-    try {
-        geocoder = new qq.maps.Geocoder({
-            complete: function (result) {
-                var loc = result.detail.location;
-                var lat = (typeof loc.getLat === "function") ? loc.getLat() : loc.lat;
-                var lng = (typeof loc.getLng === "function") ? loc.getLng() : loc.lng;
-                report({ ok: true, lng: lng, lat: lat });
-            },
-            error: function () {
-                report({ ok: false, error: "geocode failed" });
-            }
-        });
-        report({ ready: true });
-    } catch (e) {
-        report({ ready: false, error: "init failed" });
-    }
-}
-
+// 地址解析走腾讯 WebService（JSONP），不依赖 qq.maps JS SDK：
+// 本 Key 仅授权 WebServiceAPI，经典 JS API 的 Geocoder 返回 status=113 未授权。
 function geocodeAddress(args) {
-    if (!geocoder) {
-        report({ ok: false, error: "sdk not ready" });
-        return;
-    }
-    geocoder.getLocation(args[0]);
+    var cbName = "__evcpGeocodeCb";
+    window[cbName] = function (obj) {
+        window[cbName] = undefined;
+        if (obj && obj.status === 0 && obj.result && obj.result.location) {
+            report({ ok: true, lng: obj.result.location.lng, lat: obj.result.location.lat });
+        } else {
+            var st = obj ? obj.status : "no-response";
+            var msg = (obj && obj.message) ? obj.message : "";
+            report({ ok: false, error: "webservice status=" + st + " " + msg });
+        }
+    };
+    var s = document.createElement("script");
+    s.onerror = function () {
+        report({ ok: false, error: "webservice request failed" });
+    };
+    s.src = "https://apis.map.qq.com/ws/geocoder/v1/?address=" + encodeURIComponent(args[0])
+        + "&key=__TENCENT_MAP_KEY__&output=jsonp&callback=" + cbName;
+    document.body.appendChild(s);
 }
 
-// 入口脚本只是 loader，真正的库由它再注入，必须等 qq.maps.Geocoder 出现
-var waitRounds = 0;
-var waitTimer = setInterval(function () {
-    waitRounds += 1;
-    if (window.qq && qq.maps && typeof qq.maps.Geocoder === "function") {
-        clearInterval(waitTimer);
-        initGeocoder();
-    } else if (waitRounds > 150) {
-        clearInterval(waitTimer);
-        report({ ready: false, error: "sdk load timeout" });
-    }
-}, 100);
+report({ ready: true });
 </script>
-<script src="https://map.qq.com/api/js?v=2.exp&key=__TENCENT_MAP_KEY__"
-        onerror="report({ ready: false, error: 'sdk load failed' })"></script>
 </body>
 </html>
