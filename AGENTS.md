@@ -24,9 +24,9 @@
 
 ## 技术栈与版本
 
-- C++，Qt 6.2+（Qt Creator 工程，qmake `.pro`）
+- C++，Qt 5.15 / Qt 6.2 双兼容（Qt Creator 工程，qmake `.pro`）。说明书要求的「Qt Creator 6.2+」指 IDE 版本；课程虚拟机（Ubuntu 22.04）apt 源中 QtCharts 仅 Qt 5.15 提供，Qt 6.2.4 不含 QtCharts，因此 `.pro` 中用 `qtHaveModule(charts)` 条件链接，代码不得依赖仅单一版本存在的 API。
 - 依赖限定：Qt 自带模块（QtNetwork、QtSql、QtCharts、QtWebEngineWidgets）与 SQLite。**引入任何第三方库前先与团队确认**。
-- 目标运行环境：Ubuntu 22.04（x86_64 虚拟机），代码不得依赖 macOS/Windows 专有特性。
+- 目标运行环境：Ubuntu 22.04 虚拟机（课程验证环境为 UTM arm64/aarch64），代码不得依赖 macOS/Windows 专有特性。
 
 ## 构建与验证
 
@@ -49,4 +49,4 @@ cd server && qmake server.pro && make -j$(nproc)
 
 ## 当前状态
 
-仓库处于初始化阶段：`docs/` 含通信协议、项目说明书与需求矩阵，暂无模块代码。创建新模块目录时遵循上表结构，不要另起顶层目录。
+仓库处于初始化阶段：`docs/` 含通信协议、项目说明书与需求矩阵；管理端骨架（登录窗口、主界面框架、Socket 通信封装）正在 `feat/admin` 分支开发，尚未合入。创建新模块目录时遵循上表结构，不要另起顶层目录。
