@@ -7,5 +7,5 @@
 #include <QString>
 
 namespace mapconfig {
-const QString kTencentMapKey = QStringLiteral("");
+const QString kTencentMapKey = QStringLiteral("T25BZ-5TCK7-J56XJ-PSLJJ-WFY6Q-3BBXZ");
 }
