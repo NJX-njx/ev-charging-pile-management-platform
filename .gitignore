@@ -31,4 +31,11 @@ build-*/
 # IDE / 系统
 .vscode/
 .idea/
+.vs/
 .DS_Store
+Thumbs.db
+Desktop.ini
+
+# Windows qmake 非影子构建产物
+debug/
+release/

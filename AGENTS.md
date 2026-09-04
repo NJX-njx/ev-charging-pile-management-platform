@@ -26,7 +26,7 @@
 
 - C++，Qt 5.15 / Qt 6.2 双兼容（Qt Creator 工程，qmake `.pro`）。说明书要求的「Qt Creator 6.2+」指 IDE 版本；课程虚拟机（Ubuntu 22.04）apt 源中 QtCharts 仅 Qt 5.15 提供，Qt 6.2.4 不含 QtCharts，因此 `.pro` 中用 `qtHaveModule(charts)` 条件链接，代码不得依赖仅单一版本存在的 API。
 - 依赖限定：Qt 自带模块（QtNetwork、QtSql、QtCharts、QtWebEngineWidgets）与 SQLite。**引入任何第三方库前先与团队确认**。
-- 目标运行环境：Ubuntu 22.04（x86_64 虚拟机），代码不得依赖 macOS/Windows 专有特性。
+- 目标运行环境：Ubuntu 22.04 虚拟机（课程验证环境为 UTM arm64/aarch64），代码不得依赖 macOS/Windows 专有特性。
 
 ## 构建与验证
 
@@ -46,6 +46,16 @@ cd server && qmake server.pro && make -j$(nproc)
 - 提交信息格式：`<模块>: <中文简述>`，如 `admin: 实现管理员登录界面与Socket连接`。
 - 不提交构建产物与本地配置：`*.o`、`Makefile`、`build-*/`、`*.pro.user`、核心转储等。如仓库缺少 `.gitignore`，先补一个 Qt/C++ 的再提交代码。
 - 两人协作，各自在功能分支开发后合入 `main`；改动 `docs/protocol.md` 的提交必须通知对方。
+
+## 跨平台协作
+
+成员开发环境不同（macOS、Windows、Ubuntu 虚拟机），遵守以下约定：
+
+- 换行符由 `.gitattributes` 统一（源码强制 LF 入库）。编辑器不要开启「保存时转换整个文件换行符」，避免整文件无意义 diff。
+- Windows 成员用 Qt Creator 打开对应模块的 `.pro` 构建即可（MinGW/MSVC 套件均可），与文档中的 `qmake && make` 命令等价。`.pro.user`、`.vs/`、`debug/`、`release/` 等本地文件已由 `.gitignore` 覆盖，不得手动强制添加。
+- 新增文件/目录的名称不得与已有文件仅大小写不同（Windows 与 macOS 文件系统默认不区分大小写，会造成检出冲突）。
+- 协议、文档、工程配置类改动直接在 `main` 提交并及时推送；模块代码在功能分支开发，构建验证通过并经负责人确认后再合入 `main`。
+- 在某一平台验证过的构建，不代表其他平台通过；提交涉及平台相关代码（路径、换行、网络）时，在提交信息中注明已验证的平台。
 
 ## 当前状态
 
