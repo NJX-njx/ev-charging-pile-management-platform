@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>evcp-map</title>
+</head>
+<body>
+<script>
+var geocoder = null;
+
+function report(obj) {
+    document.title = "EVCP_GEOCODE:" + JSON.stringify(obj);
+}
+
+function initGeocoder() {
+    try {
+        geocoder = new qq.maps.Geocoder({
+            complete: function (result) {
+                var loc = result.detail.location;
+                var lat = (typeof loc.getLat === "function") ? loc.getLat() : loc.lat;
+                var lng = (typeof loc.getLng === "function") ? loc.getLng() : loc.lng;
+                report({ ok: true, lng: lng, lat: lat });
+            },
+            error: function () {
+                report({ ok: false, error: "geocode failed" });
+            }
+        });
+        report({ ready: true });
+    } catch (e) {
+        report({ ready: false, error: "init failed" });
+    }
+}
+
+function geocodeAddress(args) {
+    if (!geocoder) {
+        report({ ok: false, error: "sdk not ready" });
+        return;
+    }
+    geocoder.getLocation(args[0]);
+}
+</script>
+<script src="https://map.qq.com/api/js?v=2.exp&key=__TENCENT_MAP_KEY__"
+        onload="initGeocoder()"
+        onerror="report({ ready: false, error: 'sdk load failed' })"></script>
+</body>
+</html>
