@@ -3,7 +3,11 @@
 
 #include <QLabel>
 
+#include "pilemanagepage.h"
+#include "pilestatuspage.h"
 #include "salespage.h"
+#include "stationpage.h"
+#include "userpage.h"
 
 MainWindow::MainWindow(SocketClient *client, QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MainWindow), m_client(client)
@@ -21,18 +25,27 @@ MainWindow::MainWindow(SocketClient *client, QWidget *parent)
     ui->listWidgetNav->addItems(modules);
 
     SalesPage *salesPage = new SalesPage(m_client);
+    PileStatusPage *pileStatusPage = new PileStatusPage(m_client);
+    PileManagePage *pileManagePage = new PileManagePage(m_client);
+    StationPage *stationPage = new StationPage(m_client);
+    UserPage *userPage = new UserPage(m_client);
+
     ui->stackedWidget->addWidget(salesPage);
-    for (int i = 1; i < modules.size(); ++i) {
-        QLabel *page = new QLabel(QStringLiteral("「%1」页面待开发").arg(modules.at(i)));
-        page->setAlignment(Qt::AlignCenter);
-        ui->stackedWidget->addWidget(page);
-    }
+    ui->stackedWidget->addWidget(pileStatusPage);
+    ui->stackedWidget->addWidget(pileManagePage);
+    ui->stackedWidget->addWidget(stationPage);
+    ui->stackedWidget->addWidget(userPage);
 
     connect(ui->listWidgetNav, &QListWidget::currentRowChanged, this,
-            [this, salesPage](int row) {
+            [=](int row) {
                 ui->stackedWidget->setCurrentIndex(row);
-                if (row == 0)
-                    salesPage->refresh();
+                switch (row) {
+                case 0: salesPage->refresh(); break;
+                case 1: pileStatusPage->refresh(); break;
+                case 2: pileManagePage->refresh(); break;
+                case 3: stationPage->refresh(); break;
+                case 4: userPage->refresh(); break;
+                }
             });
     ui->listWidgetNav->setCurrentRow(0);
     salesPage->refresh();
