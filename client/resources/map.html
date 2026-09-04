@@ -38,9 +38,21 @@ function geocodeAddress(args) {
     }
     geocoder.getLocation(args[0]);
 }
+
+// 入口脚本只是 loader，真正的库由它再注入，必须等 qq.maps.Geocoder 出现
+var waitRounds = 0;
+var waitTimer = setInterval(function () {
+    waitRounds += 1;
+    if (window.qq && qq.maps && typeof qq.maps.Geocoder === "function") {
+        clearInterval(waitTimer);
+        initGeocoder();
+    } else if (waitRounds > 150) {
+        clearInterval(waitTimer);
+        report({ ready: false, error: "sdk load timeout" });
+    }
+}, 100);
 </script>
 <script src="https://map.qq.com/api/js?v=2.exp&key=__TENCENT_MAP_KEY__"
-        onload="initGeocoder()"
         onerror="report({ ready: false, error: 'sdk load failed' })"></script>
 </body>
 </html>
