@@ -19,9 +19,11 @@ PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8888
 
 STATIONS = [
     {"stationId": 1, "name": "星海广场站", "address": "沙河口区星海广场",
-     "lng": 121.594, "lat": 38.881, "pileTotal": 3, "onlineRate": 1.0},
+     "lng": 121.594, "lat": 38.881, "pricePerKwh": 1.20,
+     "pileTotal": 3, "pileIdle": 2, "onlineRate": 1.0},
     {"stationId": 2, "name": "高新园区站", "address": "黄浦路100号",
-     "lng": 121.520, "lat": 38.860, "pileTotal": 3, "onlineRate": 0.67},
+     "lng": 121.520, "lat": 38.860, "pricePerKwh": 1.30,
+     "pileTotal": 3, "pileIdle": 2, "onlineRate": 0.67},
 ]
 
 PILES = [
@@ -41,14 +43,15 @@ PILES = [
 
 USERS = [
     {"userId": 1, "phone": "13800001234", "nickname": "用户1234",
-     "balance": 86.5, "regTime": "2026-09-01 10:20:30", "status": "normal"},
+     "balance": 86.5, "regTime": "2026-09-01T10:20:30+08:00", "status": "normal"},
     {"userId": 2, "phone": "13911115678", "nickname": "用户5678",
-     "balance": 12.0, "regTime": "2026-09-02 14:05:11", "status": "frozen"},
+     "balance": 12.0, "regTime": "2026-09-02T14:05:11+08:00", "status": "frozen"},
     {"userId": 3, "phone": "13722229999", "nickname": "用户9999",
-     "balance": 230.8, "regTime": "2026-09-03 09:41:52", "status": "normal"},
+     "balance": 230.8, "regTime": "2026-09-03T09:41:52+08:00", "status": "normal"},
 ]
 
 NEXT_STATION_ID = 3
+NEXT_PILE_ID = 300
 
 
 def ok(data):
@@ -65,7 +68,8 @@ def handle(req):
     p = req.get("payload") or {}
 
     if t == "ping":
-        return ok({})
+        now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
+        return ok({"serverTime": now.isoformat(timespec="seconds")})
 
     if t == "admin_login":
         if p.get("username") == "admin" and p.get("password") == "123456":
@@ -85,13 +89,14 @@ def handle(req):
             day = today - datetime.timedelta(days=r - 1 - i)
             amount = round(100 + (i * 37 % 250) + (i % 3) * 12.5, 2)
             points.append({"date": day.isoformat(), "amount": amount})
-        return ok({"points": points})
+        return ok({"range": r, "points": points})
 
     if t == "pile_status_overview":
         data = {"idle": 0, "inUse": 0, "fault": 0}
         key = {"idle": "idle", "in_use": "inUse", "fault": "fault"}
         for pile in PILES:
             data[key[pile["status"]]] += 1
+        data["total"] = len(PILES)
         return ok(data)
 
     if t == "pile_list":
@@ -112,18 +117,46 @@ def handle(req):
     if t == "station_list":
         return ok({"stations": STATIONS})
 
+    if t == "station_detail":
+        sid = p.get("stationId")
+        for s in STATIONS:
+            if s["stationId"] == sid:
+                piles = sorted((x for x in PILES if x["stationId"] == sid),
+                               key=lambda x: x["code"])
+                return ok({"station": s, "piles": piles})
+        return err(2002, "站点不存在")
+
     if t == "station_add":
-        global NEXT_STATION_ID
+        global NEXT_STATION_ID, NEXT_PILE_ID
         name = (p.get("name") or "").strip()
+        address = (p.get("address") or "").strip()
+        price = p.get("pricePerKwh")
         count = p.get("pileCount")
-        if not name or not isinstance(count, int) or count <= 0:
+        if (not name or not address
+                or not isinstance(price, (int, float)) or price <= 0
+                or not isinstance(count, int) or not 1 <= count <= 100):
             return err(2001, "参数缺失或非法")
-        station = {"stationId": NEXT_STATION_ID, "name": name,
-                   "address": p.get("address", ""), "lng": p.get("lng", 0),
-                   "lat": p.get("lat", 0), "pileTotal": count, "onlineRate": 1.0}
+        station = {"stationId": NEXT_STATION_ID, "name": name, "address": address,
+                   "lng": p.get("lng", 0), "lat": p.get("lat", 0),
+                   "pricePerKwh": round(float(price), 2),
+                   "pileTotal": count, "pileIdle": count, "onlineRate": 1.0}
         NEXT_STATION_ID += 1
         STATIONS.append(station)
-        return ok({"stationId": station["stationId"]})
+        created = 0
+        for i in range(count):
+            NEXT_PILE_ID += 1
+            fast = (i % 2 == 0)
+            PILES.append({
+                "pileId": NEXT_PILE_ID,
+                "code": "P-%04d" % NEXT_PILE_ID,
+                "stationId": station["stationId"],
+                "stationName": name,
+                "type": "fast" if fast else "slow",
+                "powerKw": 60 if fast else 7,
+                "status": "idle", "chargeCount": 0, "chargeMinutes": 0,
+            })
+            created += 1
+        return ok({"station": station, "createdPileCount": created})
 
     if t == "user_list":
         kw = p.get("phoneKeyword", "")

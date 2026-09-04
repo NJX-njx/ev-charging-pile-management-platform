@@ -1,5 +1,6 @@
 #include "userpage.h"
 
+#include <QDateTime>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QJsonArray>
@@ -80,7 +81,11 @@ void UserPage::loadUsers(const QString &phoneKeyword)
                                   m_table->setItem(row, 1, new QTableWidgetItem(u[QStringLiteral("phone")].toString()));
                                   m_table->setItem(row, 2, new QTableWidgetItem(u[QStringLiteral("nickname")].toString()));
                                   m_table->setItem(row, 3, new QTableWidgetItem(QString::number(u[QStringLiteral("balance")].toDouble(), 'f', 2)));
-                                  m_table->setItem(row, 4, new QTableWidgetItem(u[QStringLiteral("regTime")].toString()));
+
+                                  const QDateTime regTime = QDateTime::fromString(u[QStringLiteral("regTime")].toString(), Qt::ISODate);
+                                  m_table->setItem(row, 4, new QTableWidgetItem(regTime.isValid()
+                                                                                    ? regTime.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))
+                                                                                    : u[QStringLiteral("regTime")].toString()));
 
                                   const QString status = u[QStringLiteral("status")].toString();
                                   QTableWidgetItem *statusItem = new QTableWidgetItem(UiEnums::userStatusText(status));
