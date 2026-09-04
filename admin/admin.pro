@@ -33,3 +33,6 @@ HEADERS += \
 FORMS += \
     ui/loginwindow.ui \
     ui/mainwindow.ui
+
+RESOURCES += \
+    resources/resources.qrc

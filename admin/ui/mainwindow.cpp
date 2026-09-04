@@ -13,6 +13,7 @@ MainWindow::MainWindow(SocketClient *client, QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MainWindow), m_client(client)
 {
     ui->setupUi(this);
+    setMinimumSize(1120, 700);
 
     const QStringList modules = {
         QStringLiteral("销售业绩"),

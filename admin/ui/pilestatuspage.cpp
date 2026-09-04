@@ -16,6 +16,7 @@
 PileStatusPage::PileStatusPage(SocketClient *client, QWidget *parent)
     : QWidget(parent), m_client(client)
 {
+    setObjectName(QStringLiteral("page"));
     QVBoxLayout *root = new QVBoxLayout(this);
 
     QHBoxLayout *cards = new QHBoxLayout;
@@ -40,7 +41,9 @@ PileStatusPage::PileStatusPage(SocketClient *client, QWidget *parent)
     m_table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_table->setAlternatingRowColors(true);
     m_table->verticalHeader()->setVisible(false);
+    m_table->verticalHeader()->setDefaultSectionSize(36);
     root->addWidget(m_table, 1);
 
     connect(refreshBtn, &QPushButton::clicked, this, &PileStatusPage::refresh);
@@ -49,6 +52,7 @@ PileStatusPage::PileStatusPage(SocketClient *client, QWidget *parent)
 QWidget *PileStatusPage::createStatusCard(const QString &title, QLabel **valueLabel)
 {
     QFrame *card = new QFrame;
+    card->setObjectName(QStringLiteral("card"));
     card->setFrameShape(QFrame::StyledPanel);
     QVBoxLayout *layout = new QVBoxLayout(card);
 

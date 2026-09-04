@@ -1,0 +1,103 @@
+/* 管理端样式表，色值与规则以 docs/visual-design.md 为准 */
+
+QWidget#page {
+    background: #F5F6F7;
+}
+
+QDialog, QMessageBox {
+    background: #FFFFFF;
+}
+
+/* 左侧导航：深色底 + 主色选中指示条 */
+QListWidget#listWidgetNav {
+    background: #1F2937;
+    border: none;
+    outline: none;
+    font-size: 14px;
+}
+QListWidget#listWidgetNav::item {
+    color: #D7DDE5;
+    padding: 10px 12px;
+    border-left: 4px solid transparent;
+}
+QListWidget#listWidgetNav::item:selected {
+    background: #E3F6EF;
+    color: #00875C;
+    border-left: 4px solid #00A870;
+}
+QListWidget#listWidgetNav::item:hover:!selected {
+    background: #263448;
+}
+
+/* 指标卡：白底圆角 */
+QFrame#card {
+    background: #FFFFFF;
+    border: 1px solid #E0E3E6;
+    border-radius: 8px;
+}
+
+/* 次按钮（默认） */
+QPushButton {
+    background: #FFFFFF;
+    border: 1px solid #E0E3E6;
+    border-radius: 6px;
+    color: #1F2329;
+    padding: 5px 14px;
+    min-height: 22px;
+}
+QPushButton:hover {
+    border-color: #00A870;
+}
+QPushButton:disabled {
+    background: #F5F6F7;
+    color: #9CA3AF;
+}
+
+/* 主按钮（动态属性 primary=true） */
+QPushButton[primary="true"] {
+    background: #00A870;
+    border: none;
+    color: #FFFFFF;
+    font-weight: bold;
+}
+QPushButton[primary="true"]:hover {
+    background: #00875C;
+}
+QPushButton[primary="true"]:disabled {
+    background: #A7DCC9;
+}
+
+/* 输入控件 */
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
+    background: #FFFFFF;
+    border: 1px solid #E0E3E6;
+    border-radius: 4px;
+    padding: 4px 6px;
+    selection-background-color: #00A870;
+}
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {
+    border-color: #00A870;
+}
+
+/* 表格 */
+QTableWidget {
+    background: #FFFFFF;
+    border: 1px solid #E0E3E6;
+    gridline-color: #E0E3E6;
+    alternate-background-color: #FAFBFC;
+    selection-background-color: #E3F6EF;
+    selection-color: #1F2329;
+}
+QHeaderView::section {
+    background: #F0F2F4;
+    border: none;
+    border-bottom: 1px solid #E0E3E6;
+    padding: 6px;
+    color: #1F2329;
+    font-weight: bold;
+}
+
+/* 登录窗口 */
+QWidget#LoginWindow {
+    background: #F5F6F7;
+}

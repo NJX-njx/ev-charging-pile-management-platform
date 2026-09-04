@@ -16,6 +16,7 @@
 PileManagePage::PileManagePage(SocketClient *client, QWidget *parent)
     : QWidget(parent), m_client(client)
 {
+    setObjectName(QStringLiteral("page"));
     QVBoxLayout *root = new QVBoxLayout(this);
 
     QHBoxLayout *controls = new QHBoxLayout;
@@ -39,7 +40,9 @@ PileManagePage::PileManagePage(SocketClient *client, QWidget *parent)
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_table->setAlternatingRowColors(true);
     m_table->verticalHeader()->setVisible(false);
+    m_table->verticalHeader()->setDefaultSectionSize(36);
     root->addWidget(m_table, 1);
 
     connect(refreshBtn, &QPushButton::clicked, this, &PileManagePage::refresh);

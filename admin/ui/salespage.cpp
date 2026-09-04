@@ -23,6 +23,7 @@ QT_CHARTS_USE_NAMESPACE
 SalesPage::SalesPage(SocketClient *client, QWidget *parent)
     : QWidget(parent), m_client(client)
 {
+    setObjectName(QStringLiteral("page"));
     QVBoxLayout *root = new QVBoxLayout(this);
 
     QHBoxLayout *cards = new QHBoxLayout;
@@ -66,6 +67,7 @@ SalesPage::SalesPage(SocketClient *client, QWidget *parent)
 QWidget *SalesPage::createMetricCard(const QString &title, QLabel **valueLabel)
 {
     QFrame *card = new QFrame;
+    card->setObjectName(QStringLiteral("card"));
     card->setFrameShape(QFrame::StyledPanel);
     QVBoxLayout *layout = new QVBoxLayout(card);
 

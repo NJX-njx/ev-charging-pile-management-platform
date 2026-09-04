@@ -11,6 +11,7 @@ LoginWindow::LoginWindow(SocketClient *client, QWidget *parent)
     : QWidget(parent), ui(new Ui::LoginWindow), m_client(client)
 {
     ui->setupUi(this);
+    ui->pushButtonLogin->setProperty("primary", true);
     connect(ui->pushButtonLogin, &QPushButton::clicked, this, &LoginWindow::onLoginClicked);
 }
 

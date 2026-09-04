@@ -24,6 +24,7 @@
 StationPage::StationPage(SocketClient *client, QWidget *parent)
     : QWidget(parent), m_client(client)
 {
+    setObjectName(QStringLiteral("page"));
     QVBoxLayout *root = new QVBoxLayout(this);
 
     QHBoxLayout *controls = new QHBoxLayout;
@@ -32,6 +33,7 @@ StationPage::StationPage(SocketClient *client, QWidget *parent)
     QPushButton *pilesBtn = new QPushButton(QStringLiteral("查看站内电桩"));
     controls->addWidget(pilesBtn);
     QPushButton *addBtn = new QPushButton(QStringLiteral("新增站点"));
+    addBtn->setProperty("primary", true);
     controls->addWidget(addBtn);
     QPushButton *refreshBtn = new QPushButton(QStringLiteral("刷新"));
     controls->addWidget(refreshBtn);
@@ -48,7 +50,9 @@ StationPage::StationPage(SocketClient *client, QWidget *parent)
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_table->setAlternatingRowColors(true);
     m_table->verticalHeader()->setVisible(false);
+    m_table->verticalHeader()->setDefaultSectionSize(36);
     root->addWidget(m_table, 1);
 
     connect(refreshBtn, &QPushButton::clicked, this, &StationPage::refresh);
