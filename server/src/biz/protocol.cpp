@@ -17,24 +17,25 @@ const char *const kStationAggregateSelect =
     "SELECT s.stationId, s.name, s.address, s.lng, s.lat, s.priceFenPerKwh,"
     " COUNT(p.pileId),"
     " COALESCE(SUM(p.status = 'idle'), 0),"
-    " COALESCE(SUM(p.status IN ('idle', 'in_use')), 0)"
+    " COALESCE(SUM(p.status IN ('idle', 'in_use')), 0), s.deleted"
     " FROM stations s LEFT JOIN piles p ON p.stationId = s.stationId AND p.deleted = 0";
 
 const char *const kPileSelect =
     "SELECT p.pileId, p.code, p.stationId, p.type, p.powerKw, p.status,"
-    " p.chargeCount, p.chargeMinutes, s.name"
+    " p.chargeCount, p.chargeMinutes, s.name, p.deleted"
     " FROM piles p JOIN stations s ON s.stationId = p.stationId";
 
 const char *const kOrderSelect =
     "SELECT o.orderId, o.stationId, o.pileId, o.status, o.unitPriceFen, o.reservedAt,"
-    " o.startTime, o.endTime, o.settledAt, o.energyWh, o.amountFen, s.name, p.code, o.userId"
+    " o.startTime, o.endTime, o.settledAt, o.energyWh, o.amountFen, s.name, p.code, o.userId,"
+    " p.powerKw"
     " FROM orders o JOIN stations s ON s.stationId = o.stationId"
     " JOIN piles p ON p.pileId = o.pileId";
 
 const char *const kAdminOrderSelect =
     "SELECT o.orderId, o.stationId, o.pileId, o.status, o.unitPriceFen, o.reservedAt,"
     " o.startTime, o.endTime, o.settledAt, o.energyWh, o.amountFen, s.name, p.code, o.userId,"
-    " u.phone"
+    " p.powerKw, u.phone"
     " FROM orders o JOIN stations s ON s.stationId = o.stationId"
     " JOIN piles p ON p.pileId = o.pileId"
     " JOIN users u ON u.userId = o.userId";
@@ -227,6 +228,7 @@ QJsonObject orderJson(const QSqlQuery &q)
     obj.insert(QStringLiteral("stationName"), q.value(11).toString());
     obj.insert(QStringLiteral("pileId"), q.value(2).toLongLong());
     obj.insert(QStringLiteral("pileCode"), q.value(12).toString());
+    obj.insert(QStringLiteral("powerKw"), q.value(14).toDouble());
     obj.insert(QStringLiteral("status"), q.value(3).toString());
     obj.insert(QStringLiteral("reservedAt"), TimeUtil::isoFromSecs(q.value(5).toLongLong()));
     auto timeOrNull = [&q](int index) -> QJsonValue {
@@ -252,7 +254,7 @@ QJsonObject orderJson(const QSqlQuery &q)
 QJsonObject adminOrderJson(const QSqlQuery &q)
 {
     QJsonObject obj = orderJson(q);
-    obj.insert(QStringLiteral("userPhone"), q.value(14).toString());
+    obj.insert(QStringLiteral("userPhone"), q.value(15).toString());
     return obj;
 }
 

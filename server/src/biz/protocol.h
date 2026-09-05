@@ -37,7 +37,7 @@ QJsonObject userJson(const QSqlQuery &q, bool withAvatar);
 QJsonObject stationSummaryJson(const QSqlQuery &q);
 QJsonObject pileJson(const QSqlQuery &q);
 QJsonObject orderJson(const QSqlQuery &q);
-// Same row shape as kOrderSelect plus u.phone at index 14.
+// Same row shape as kOrderSelect plus p.powerKw at index 14 and u.phone at 15.
 QJsonObject adminOrderJson(const QSqlQuery &q);
 
 extern const char *const kUserSelect;

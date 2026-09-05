@@ -2,6 +2,7 @@
 
 #include <QCryptographicHash>
 #include <QRandomGenerator>
+#include <QSet>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QVariant>
@@ -10,6 +11,8 @@ namespace {
 
 QString g_dbPath;
 
+// 终态结构（协议 v2.2）：只在空库上一次性建表，不做任何旧结构的就地迁移。
+// 已存在的库文件必须先通过 schemaCompatible() 自检才会继续使用。
 const char *const kSchema[] = {
     "CREATE TABLE IF NOT EXISTS admins ("
     " adminId INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -68,6 +71,9 @@ const char *const kSchema[] = {
     "CREATE INDEX IF NOT EXISTS idx_orders_settled ON orders(status, settledAt)",
     "CREATE INDEX IF NOT EXISTS idx_orders_reserved ON orders(reservedAt)",
     "CREATE INDEX IF NOT EXISTS idx_piles_station ON piles(stationId)",
+    // 手机号唯一性只在未删除用户间成立，已删除用户的手机号可以重新注册。
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone_active"
+    " ON users(phone) WHERE deleted = 0",
 };
 
 bool applyPragmas(QSqlDatabase &db, QString *errorMessage)
@@ -88,97 +94,65 @@ bool applyPragmas(QSqlDatabase &db, QString *errorMessage)
     return true;
 }
 
-} // namespace
-
-// Adds columns introduced after the v1 schema to databases created by older
-// builds; a fresh database already has them via kSchema, making this a no-op.
-bool ensureColumn(QSqlDatabase &db, const char *table, const char *column,
-                  const char *definition, QString *errorMessage)
+bool databaseIsEmpty(QSqlDatabase &db)
 {
     QSqlQuery q(db);
-    if (!q.exec(QStringLiteral("PRAGMA table_info(%1)").arg(QLatin1String(table)))) {
-        if (errorMessage)
-            *errorMessage = q.lastError().text();
+    if (!q.exec(QStringLiteral("SELECT COUNT(*) FROM sqlite_master"
+                               " WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")))
         return false;
-    }
-    while (q.next()) {
-        if (q.value(1).toString() == QLatin1String(column))
-            return true;
-    }
-    if (!q.exec(QStringLiteral("ALTER TABLE %1 ADD COLUMN %2")
-                    .arg(QLatin1String(table), QLatin1String(definition)))) {
-        if (errorMessage)
-            *errorMessage = q.lastError().text();
+    return q.next() && q.value(0).toLongLong() == 0;
+}
+
+bool tableHasColumns(QSqlDatabase &db, const char *table,
+                     std::initializer_list<const char *> required)
+{
+    QSqlQuery q(db);
+    if (!q.exec(QStringLiteral("PRAGMA table_info(%1)").arg(QLatin1String(table))))
         return false;
+    QSet<QString> columns;
+    while (q.next())
+        columns.insert(q.value(1).toString());
+    if (columns.isEmpty())
+        return false;
+    for (const char *column : required) {
+        if (!columns.contains(QLatin1String(column)))
+            return false;
     }
     return true;
 }
 
-// Rebuilds the users table when it still carries the pre-v2.1 `phone TEXT UNIQUE`
-// column constraint (visible as a sqlite_autoindex on users): SQLite cannot drop a
-// column UNIQUE constraint in place, so copy into a fresh table and swap names.
-// Phone uniqueness is then enforced only among non-deleted rows by
-// idx_users_phone_active, letting a deleted user's phone be registered again.
-// Runs after the ensureColumn migrations so every source column exists; on a
-// database without the autoindex (fresh or already migrated) it is a no-op.
-bool rebuildUsersWithoutPhoneUnique(QSqlDatabase &db, QString *errorMessage)
+// 只接受终态结构：关键表/列齐全；users.phone 上没有旧的列级 UNIQUE（会表现为
+// sqlite_autoindex，并挡住已删除手机号的重新注册）；部分唯一索引已就位。
+bool schemaCompatible(QSqlDatabase &db)
 {
+    if (!tableHasColumns(db, "admins", {"adminId", "username", "passwordHash"})
+        || !tableHasColumns(db, "users", {"userId", "phone", "nickname", "balanceFen",
+                                          "status", "avatarMime", "avatarBase64",
+                                          "passwordHash", "deleted", "regTime"})
+        || !tableHasColumns(db, "stations", {"stationId", "name", "address", "lng", "lat",
+                                             "priceFenPerKwh", "deleted"})
+        || !tableHasColumns(db, "piles", {"pileId", "code", "stationId", "type", "powerKw",
+                                          "status", "chargeCount", "chargeMinutes", "deleted"})
+        || !tableHasColumns(db, "orders", {"orderId", "userId", "stationId", "pileId",
+                                           "status", "unitPriceFen", "reservedAt",
+                                           "startTime", "endTime", "settledAt",
+                                           "energyWh", "amountFen"})
+        || !tableHasColumns(db, "counters", {"key", "value"})
+        || !tableHasColumns(db, "codes", {"phone", "code", "expiresAtEpoch"}))
+        return false;
     QSqlQuery q(db);
     if (!q.exec(QStringLiteral("SELECT name FROM sqlite_master WHERE type = 'index'"
-                               " AND tbl_name = 'users' AND name LIKE 'sqlite_autoindex%'"))) {
-        if (errorMessage)
-            *errorMessage = q.lastError().text();
+                               " AND tbl_name = 'users' AND name LIKE 'sqlite_autoindex%'")))
         return false;
-    }
-    if (!q.next())
-        return true;
-    // foreign_keys is a no-op inside a transaction, so toggle it outside; orders
-    // references users and would otherwise abort the DROP.
-    if (!q.exec(QStringLiteral("PRAGMA foreign_keys=OFF"))) {
-        if (errorMessage)
-            *errorMessage = q.lastError().text();
+    if (q.next())
         return false;
-    }
-    static const char *const steps[] = {
-        "CREATE TABLE users_new ("
-        " userId INTEGER PRIMARY KEY AUTOINCREMENT,"
-        " phone TEXT NOT NULL,"
-        " nickname TEXT NOT NULL,"
-        " balanceFen INTEGER NOT NULL DEFAULT 0,"
-        " status TEXT NOT NULL DEFAULT 'normal',"
-        " avatarMime TEXT,"
-        " avatarBase64 TEXT,"
-        " passwordHash TEXT,"
-        " deleted INTEGER NOT NULL DEFAULT 0,"
-        " regTime INTEGER NOT NULL)",
-        "INSERT INTO users_new SELECT userId, phone, nickname, balanceFen, status,"
-        " avatarMime, avatarBase64, passwordHash, deleted, regTime FROM users",
-        "DROP TABLE users",
-        "ALTER TABLE users_new RENAME TO users",
-    };
-    bool ok = db.transaction();
-    if (!ok && errorMessage)
-        *errorMessage = db.lastError().text();
-    for (const char *step : steps) {
-        if (ok && !q.exec(QLatin1String(step))) {
-            ok = false;
-            if (errorMessage)
-                *errorMessage = q.lastError().text();
-        }
-    }
-    if (ok)
-        ok = db.commit();
-    if (!ok && errorMessage && errorMessage->isEmpty())
-        *errorMessage = db.lastError().text();
-    if (!ok)
-        db.rollback();
-    if (!q.exec(QStringLiteral("PRAGMA foreign_keys=ON"))) {
-        if (ok && errorMessage)
-            *errorMessage = q.lastError().text();
+    if (!q.exec(QStringLiteral("SELECT name FROM sqlite_master WHERE type = 'index'"
+                               " AND name = 'idx_users_phone_active'")))
         return false;
-    }
-    return ok;
+    return q.next();
 }
+
+} // namespace
 
 void Database::configure(const QString &path)
 {
@@ -210,43 +184,37 @@ void Database::remove(const QString &name)
 
 bool Database::initialize(QString *errorMessage)
 {
-    QSqlDatabase db = connection(QStringLiteral("main"));
-    if (!db.isOpen()) {
+    // 先以裸连接打开：自检只做只读查询，被拒绝的旧库文件保持原样
+    //（journal_mode=WAL 本身就会改写文件头，不能先上 pragma）。
+    QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                QStringLiteral("main"));
+    db.setDatabaseName(g_dbPath);
+    if (!db.open()) {
         if (errorMessage)
             *errorMessage = db.lastError().text();
         return false;
     }
-    QSqlQuery q(db);
-    for (const char *stmt : kSchema) {
-        if (!q.exec(QLatin1String(stmt))) {
-            if (errorMessage)
-                *errorMessage = q.lastError().text();
-            return false;
+    const bool empty = databaseIsEmpty(db);
+    if (!empty && !schemaCompatible(db)) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("数据库结构与当前版本不兼容，"
+                                           "请删除旧测试数据库文件后重启: %1").arg(g_dbPath);
+        }
+        return false;
+    }
+    if (!applyPragmas(db, errorMessage))
+        return false;
+    if (empty) {
+        QSqlQuery q(db);
+        for (const char *stmt : kSchema) {
+            if (!q.exec(QLatin1String(stmt))) {
+                if (errorMessage)
+                    *errorMessage = q.lastError().text();
+                return false;
+            }
         }
     }
-    static const struct {
-        const char *table;
-        const char *column;
-        const char *definition;
-    } kMigrations[] = {
-        {"users", "passwordHash", "passwordHash TEXT"},
-        {"users", "deleted", "deleted INTEGER NOT NULL DEFAULT 0"},
-        {"stations", "deleted", "deleted INTEGER NOT NULL DEFAULT 0"},
-        {"piles", "deleted", "deleted INTEGER NOT NULL DEFAULT 0"},
-    };
-    for (const auto &migration : kMigrations) {
-        if (!ensureColumn(db, migration.table, migration.column, migration.definition,
-                          errorMessage))
-            return false;
-    }
-    if (!rebuildUsersWithoutPhoneUnique(db, errorMessage))
-        return false;
-    if (!q.exec(QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone_active"
-                               " ON users(phone) WHERE deleted = 0"))) {
-        if (errorMessage)
-            *errorMessage = q.lastError().text();
-        return false;
-    }
+    QSqlQuery q(db);
     if (!q.exec(QStringLiteral("SELECT COUNT(*) FROM admins")) || !q.next()) {
         if (errorMessage)
             *errorMessage = q.lastError().text();
