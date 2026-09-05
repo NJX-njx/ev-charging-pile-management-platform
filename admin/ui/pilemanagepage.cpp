@@ -67,19 +67,28 @@ PileManagePage::PileManagePage(SocketClient *client, QWidget *parent)
     connect(m_editBtn, &QPushButton::clicked, this, &PileManagePage::onEditPile);
     connect(m_deleteBtn, &QPushButton::clicked, this, &PileManagePage::onDeletePile);
     connect(m_restartBtn, &QPushButton::clicked, this, &PileManagePage::onRestartClicked);
-    connect(m_table, &QTableWidget::itemSelectionChanged, this, [this]() {
-        const auto items = m_table->selectedItems();
-        const bool hasSelection = !items.isEmpty();
-        bool canRestart = false;
-        if (hasSelection) {
-            const int row = items.first()->row();
-            QTableWidgetItem *statusItem = m_table->item(row, 4);
-            canRestart = statusItem && statusItem->data(Qt::UserRole).toString() == QStringLiteral("fault");
-        }
-        m_restartBtn->setEnabled(canRestart);
-        m_editBtn->setEnabled(hasSelection);
-        m_deleteBtn->setEnabled(hasSelection);
+    connect(m_table, &QTableWidget::itemSelectionChanged, this, &PileManagePage::updateActionButtons);
+    // 兜底：点击当前行不产生选中变化信号时，也要保证该行被选中且按钮状态同步
+    connect(m_table, &QTableWidget::clicked, this, [this](const QModelIndex &index) {
+        if (index.isValid())
+            m_table->selectRow(index.row());
+        updateActionButtons();
     });
+}
+
+void PileManagePage::updateActionButtons()
+{
+    const auto items = m_table->selectedItems();
+    const bool hasSelection = !items.isEmpty();
+    bool canRestart = false;
+    if (hasSelection) {
+        const int row = items.first()->row();
+        QTableWidgetItem *statusItem = m_table->item(row, 4);
+        canRestart = statusItem && statusItem->data(Qt::UserRole).toString() == QStringLiteral("fault");
+    }
+    m_restartBtn->setEnabled(canRestart);
+    m_editBtn->setEnabled(hasSelection);
+    m_deleteBtn->setEnabled(hasSelection);
 }
 
 int PileManagePage::selectedRow() const
@@ -96,6 +105,9 @@ void PileManagePage::refresh()
                           [this](int code, const QString &, const QJsonObject &data) {
                               if (code != 0)
                                   return;
+                              const int previousPileId = selectedRow() >= 0
+                                                             ? m_table->item(selectedRow(), 0)->data(Qt::UserRole).toInt()
+                                                             : -1;
                               const QJsonArray piles = data[QStringLiteral("piles")].toArray();
                               m_table->setRowCount(piles.size());
                               for (int row = 0; row < piles.size(); ++row) {
@@ -125,9 +137,20 @@ void PileManagePage::refresh()
                                   m_table->setItem(row, 5, new QTableWidgetItem(QString::number(p[QStringLiteral("chargeCount")].toInt())));
                                   m_table->setItem(row, 6, new QTableWidgetItem(QString::number(p[QStringLiteral("chargeMinutes")].toInt() / 60.0, 'f', 1)));
                               }
-                              m_restartBtn->setEnabled(false);
-                              m_editBtn->setEnabled(false);
-                              m_deleteBtn->setEnabled(false);
+                              // 重载后恢复选中：优先按 pileId 找回原行，否则选中第一行，
+                              // 保证始终存在真实选中行而非仅有当前行高亮
+                              int targetRow = -1;
+                              for (int row = 0; row < m_table->rowCount(); ++row) {
+                                  if (m_table->item(row, 0)->data(Qt::UserRole).toInt() == previousPileId) {
+                                      targetRow = row;
+                                      break;
+                                  }
+                              }
+                              if (targetRow < 0 && m_table->rowCount() > 0)
+                                  targetRow = 0;
+                              if (targetRow >= 0)
+                                  m_table->selectRow(targetRow);
+                              updateActionButtons();
                           });
 }
 
@@ -286,7 +309,7 @@ void PileManagePage::onEditPile()
     m_editBtn->setEnabled(false);
     m_client->sendRequest(QStringLiteral("pile_update"), payload,
                           [this](int code, const QString &msg, const QJsonObject &) {
-                              m_editBtn->setEnabled(true);
+                              updateActionButtons();
                               if (code == 0) {
                                   QMessageBox::information(this, QStringLiteral("修改电桩"), QStringLiteral("保存成功"));
                                   refresh();
@@ -321,7 +344,7 @@ void PileManagePage::onDeletePile()
     m_deleteBtn->setEnabled(false);
     m_client->sendRequest(QStringLiteral("pile_delete"), QJsonObject{{QStringLiteral("pileId"), pileId}},
                           [this](int code, const QString &msg, const QJsonObject &) {
-                              m_deleteBtn->setEnabled(true);
+                              updateActionButtons();
                               if (code == 0) {
                                   QMessageBox::information(this, QStringLiteral("删除电桩"), QStringLiteral("删除成功"));
                                   refresh();

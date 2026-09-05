@@ -26,6 +26,7 @@ private slots:
 
 private:
     int selectedRow() const;
+    void updateActionButtons();
     void loadAllStations(const std::function<void(bool, const QJsonArray &)> &done);
 
     SocketClient *m_client;

@@ -197,6 +197,10 @@ void OrderPage::loadOrders()
                               }
                               m_total = data[QStringLiteral("total")].toInt();
                               const QJsonArray orders = data[QStringLiteral("orders")].toArray();
+                              int previousOrderId = -1;
+                              const auto selected = m_table->selectedItems();
+                              if (!selected.isEmpty() && m_table->item(selected.first()->row(), 0))
+                                  previousOrderId = m_table->item(selected.first()->row(), 0)->data(Qt::UserRole).toInt();
                               m_table->setRowCount(orders.size());
                               for (int row = 0; row < orders.size(); ++row) {
                                   const QJsonObject o = orders.at(row).toObject();
@@ -223,6 +227,18 @@ void OrderPage::loadOrders()
                                   connect(detailBtn, &QPushButton::clicked, this,
                                           [this, orderId]() { showDetail(orderId); });
                               }
+                              // 重载后恢复选中：优先按 orderId 找回原行，否则选中第一行
+                              int targetRow = -1;
+                              for (int row = 0; row < m_table->rowCount(); ++row) {
+                                  if (m_table->item(row, 0)->data(Qt::UserRole).toInt() == previousOrderId) {
+                                      targetRow = row;
+                                      break;
+                                  }
+                              }
+                              if (targetRow < 0 && m_table->rowCount() > 0)
+                                  targetRow = 0;
+                              if (targetRow >= 0)
+                                  m_table->selectRow(targetRow);
                               updatePagination();
                           });
 }

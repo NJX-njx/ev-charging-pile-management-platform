@@ -54,6 +54,9 @@ StationPage::StationPage(SocketClient *client, QWidget *parent)
         QStringLiteral("总桩数"), QStringLiteral("在线率"), QStringLiteral("操作"),
     });
     m_table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    // 操作列固定宽度，避免 Stretch 均分时「修改」「删除」按钮文字被截断
+    m_table->horizontalHeader()->setSectionResizeMode(8, QHeaderView::Fixed);
+    m_table->setColumnWidth(8, 170);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -144,6 +147,7 @@ void StationPage::loadStations()
                                   loadStations();
                                   return;
                               }
+                              const int previousStationId = selectedStationId();
                               m_table->setRowCount(stations.size());
                               for (int row = 0; row < stations.size(); ++row) {
                                   const QJsonObject s = stations.at(row).toObject();
@@ -160,6 +164,7 @@ void StationPage::loadStations()
                                   m_table->setItem(row, 7, new QTableWidgetItem(QStringLiteral("%1%").arg(s[QStringLiteral("onlineRate")].toDouble() * 100, 0, 'f', 0)));
 
                                   QWidget *ops = new QWidget;
+                                  ops->setObjectName(QStringLiteral("stationRowOps"));
                                   QHBoxLayout *opsLayout = new QHBoxLayout(ops);
                                   opsLayout->setContentsMargins(4, 2, 4, 2);
                                   opsLayout->setSpacing(6);
@@ -173,6 +178,19 @@ void StationPage::loadStations()
                                   connect(delBtn, &QPushButton::clicked, this,
                                           [this, s, delBtn]() { onDeleteStation(s, delBtn); });
                               }
+                              // 重载后恢复选中：优先按 stationId 找回原行，否则选中第一行，
+                              // 保证「查看站内电桩」始终有真实选中行可用
+                              int targetRow = -1;
+                              for (int row = 0; row < m_table->rowCount(); ++row) {
+                                  if (m_table->item(row, 0)->data(Qt::UserRole).toInt() == previousStationId) {
+                                      targetRow = row;
+                                      break;
+                                  }
+                              }
+                              if (targetRow < 0 && m_table->rowCount() > 0)
+                                  targetRow = 0;
+                              if (targetRow >= 0)
+                                  m_table->selectRow(targetRow);
                               updatePagination();
                           });
 }

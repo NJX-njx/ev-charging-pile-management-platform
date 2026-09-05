@@ -53,6 +53,12 @@ QPushButton:disabled {
     color: #9CA3AF;
 }
 
+/* 站点表格行内操作按钮：紧凑内边距 + 最小宽度，保证「修改」「删除」文字完整 */
+QWidget#stationRowOps QPushButton {
+    padding: 4px 10px;
+    min-width: 48px;
+}
+
 /* 主按钮（动态属性 primary=true） */
 QPushButton[primary="true"] {
     background: #00A870;
