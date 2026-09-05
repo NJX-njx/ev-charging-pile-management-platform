@@ -171,6 +171,19 @@ QLineEdit:disabled {
     color: #6B7280;
 }
 
+/* 密码框「显示/隐藏」切换按钮 */
+QToolButton#passwordToggle {
+    background: transparent;
+    border: none;
+    color: #6B7280;
+    font-size: 12px;
+    padding: 0 4px;
+}
+QToolButton#passwordToggle:checked {
+    color: #00A870;
+    font-weight: bold;
+}
+
 /* ---------- 下拉框 ---------- */
 QComboBox {
     background: #FFFFFF;

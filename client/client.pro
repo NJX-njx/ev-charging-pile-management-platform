@@ -40,6 +40,7 @@ HEADERS += \
     src/map/tencentmapkey.h \
     src/ui/uienums.h \
     src/ui/avatarutils.h \
+    src/ui/passwordtoggle.h \
     src/ui/smscodebutton.h \
     src/pages/loginpage.h \
     src/pages/resetpassworddialog.h \

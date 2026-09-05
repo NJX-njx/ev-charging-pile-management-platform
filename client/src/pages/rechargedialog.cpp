@@ -52,6 +52,7 @@ RechargeDialog::RechargeDialog(SocketClient *client, QWidget *parent)
 
     m_amountEdit = new QLineEdit(this);
     m_amountEdit->setPlaceholderText(QStringLiteral("充值金额（≤10000，最多两位小数）"));
+    m_amountEdit->setInputMethodHints(Qt::ImhFormattedNumbersOnly);
     layout->addWidget(m_amountEdit);
     connect(m_amountEdit, &QLineEdit::textEdited, this, [this]() {
         for (QPushButton *b : m_presetButtons)

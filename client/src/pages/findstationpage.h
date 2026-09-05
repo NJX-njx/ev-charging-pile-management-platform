@@ -8,6 +8,7 @@ class QComboBox;
 class QDialog;
 class QLineEdit;
 class QPushButton;
+class QShowEvent;
 class QVBoxLayout;
 class QLabel;
 class SocketClient;
@@ -25,6 +26,9 @@ public:
 signals:
     void orderStateDirty();
     void requestRecharge();
+
+protected:
+    void showEvent(QShowEvent *event) override;
 
 private:
     void onRegionSelected(int index);
@@ -50,6 +54,7 @@ private:
     QWidget *m_listContainer;
     QVBoxLayout *m_listLayout;
     QLabel *m_emptyHint;
+    bool m_defaultSearched = false; // 「全部区域（默认）」首次进入时已自动查询
     bool m_hasLastCoord = false;
     double m_lastLng = 0.0;
     double m_lastLat = 0.0;
