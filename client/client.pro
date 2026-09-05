@@ -27,6 +27,7 @@ SOURCES += \
     src/pages/findstationpage.cpp \
     src/pages/chargingpage.cpp \
     src/pages/mypage.cpp \
+    src/pages/profileeditdialog.cpp \
     src/pages/rechargedialog.cpp \
     src/pages/navigationdialog.cpp
 
@@ -38,6 +39,7 @@ HEADERS += \
     src/map/mapbridge.h \
     src/map/tencentmapkey.h \
     src/ui/uienums.h \
+    src/ui/avatarutils.h \
     src/ui/smscodebutton.h \
     src/pages/loginpage.h \
     src/pages/resetpassworddialog.h \
@@ -45,6 +47,7 @@ HEADERS += \
     src/pages/findstationpage.h \
     src/pages/chargingpage.h \
     src/pages/mypage.h \
+    src/pages/profileeditdialog.h \
     src/pages/rechargedialog.h \
     src/pages/navigationdialog.h
 

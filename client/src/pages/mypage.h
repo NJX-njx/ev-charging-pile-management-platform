@@ -5,7 +5,6 @@
 #include "model/models.h"
 
 class QLabel;
-class QLineEdit;
 class QPushButton;
 class QVBoxLayout;
 class SocketClient;
@@ -29,8 +28,7 @@ protected:
     void showEvent(QShowEvent *event) override;
 
 private:
-    void onChangeAvatar();
-    void onSaveNickname();
+    void openProfileEdit();
     void onLoadMoreOrders();
     void renderProfile();
     void appendOrders(const QList<Order> &orders);
@@ -41,9 +39,8 @@ private:
     bool m_hasUser = false;
 
     QLabel *m_avatarLabel;
-    QLineEdit *m_nicknameEdit;
-    QPushButton *m_saveNicknameButton;
-    QPushButton *m_avatarButton;
+    QLabel *m_nicknameLabel;
+    QPushButton *m_editProfileButton;
     QPushButton *m_passwordButton;
     QLabel *m_phoneLabel;
 

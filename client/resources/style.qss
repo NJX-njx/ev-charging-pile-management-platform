@@ -67,7 +67,7 @@ QLabel[state="cancelled"] {
 }
 
 /* ---------- 卡片 ---------- */
-QFrame#card, QFrame#stationCard {
+QFrame#card, QFrame#stationCard, QFrame#orderCard {
     background: #FFFFFF;
     border: 1px solid #E0E3E6;
     border-radius: 8px;
@@ -169,6 +169,28 @@ QLineEdit:focus {
 QLineEdit:disabled {
     background: #F5F6F7;
     color: #6B7280;
+}
+
+/* ---------- 下拉框 ---------- */
+QComboBox {
+    background: #FFFFFF;
+    border: 1px solid #E0E3E6;
+    border-radius: 6px;
+    min-height: 32px;
+    padding: 0 8px;
+}
+QComboBox:focus {
+    border: 1px solid #00A870;
+}
+QComboBox::drop-down {
+    border: none;
+    width: 24px;
+}
+QComboBox QAbstractItemView {
+    background: #FFFFFF;
+    border: 1px solid #E0E3E6;
+    selection-background-color: #E3F6EF;
+    selection-color: #1F2329;
 }
 
 /* ---------- 滚动区 ---------- */

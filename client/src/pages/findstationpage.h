@@ -4,6 +4,7 @@
 
 #include "model/models.h"
 
+class QComboBox;
 class QDialog;
 class QLineEdit;
 class QPushButton;
@@ -26,6 +27,7 @@ signals:
     void requestRecharge();
 
 private:
+    void onRegionSelected(int index);
     void onGeocodeClicked();
     void onSearchClicked();
     void onRefreshClicked();
@@ -38,6 +40,7 @@ private:
 
     SocketClient *m_client;
     MapBridge *m_map = nullptr;
+    QComboBox *m_regionCombo;
     QLineEdit *m_addressEdit;
     QLineEdit *m_lngEdit;
     QLineEdit *m_latEdit;
@@ -50,5 +53,6 @@ private:
     bool m_hasLastCoord = false;
     double m_lastLng = 0.0;
     double m_lastLat = 0.0;
+    QString m_lastLocationDesc; // 当前定位来源（区域/地址/手动坐标），导航起点展示用
     double m_knownBalance = -1.0;
 };

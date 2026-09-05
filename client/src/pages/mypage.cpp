@@ -1,66 +1,25 @@
 #include "mypage.h"
 
-#include <QFileDialog>
-#include <QFileInfo>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QLabel>
-#include <QLineEdit>
 #include <QMessageBox>
-#include <QPainter>
-#include <QPainterPath>
 #include <QPushButton>
-#include <QRegularExpression>
 #include <QScrollArea>
 #include <QShowEvent>
 #include <QVBoxLayout>
 
 #include "net/socketclient.h"
 #include "pages/passworddialog.h"
+#include "pages/profileeditdialog.h"
 #include "pages/rechargedialog.h"
+#include "ui/avatarutils.h"
 #include "ui/uienums.h"
 
 namespace {
-constexpr qint64 kMaxAvatarBytes = 512 * 1024;
 constexpr int kOrderPageSize = 10;
-
-QPixmap roundedAvatar(const QPixmap &src, int size)
-{
-    const QPixmap scaled = src.scaled(size, size, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
-    QPixmap out(size, size);
-    out.fill(Qt::transparent);
-    QPainter painter(&out);
-    painter.setRenderHint(QPainter::Antialiasing);
-    QPainterPath path;
-    path.addRoundedRect(0, 0, size, size, 8, 8);
-    painter.setClipPath(path);
-    const int x = (size - scaled.width()) / 2;
-    const int y = (size - scaled.height()) / 2;
-    painter.drawPixmap(x, y, scaled);
-    return out;
-}
-
-bool looksLikeJpegOrPng(const QByteArray &bytes, QString *mime)
-{
-    if (bytes.size() >= 3
-        && static_cast<unsigned char>(bytes[0]) == 0xFF
-        && static_cast<unsigned char>(bytes[1]) == 0xD8
-        && static_cast<unsigned char>(bytes[2]) == 0xFF) {
-        *mime = QStringLiteral("image/jpeg");
-        return true;
-    }
-    if (bytes.size() >= 8
-        && static_cast<unsigned char>(bytes[0]) == 0x89
-        && bytes.mid(1, 3) == "PNG"
-        && static_cast<unsigned char>(bytes[4]) == 0x0D
-        && static_cast<unsigned char>(bytes[5]) == 0x0A) {
-        *mime = QStringLiteral("image/png");
-        return true;
-    }
-    return false;
-}
 } // namespace
 
 MyPage::MyPage(SocketClient *client, QWidget *parent)
@@ -98,10 +57,9 @@ MyPage::MyPage(SocketClient *client, QWidget *parent)
     m_avatarLabel->setAlignment(Qt::AlignCenter);
     profileTopRow->addWidget(m_avatarLabel, 0);
     auto *nameColumn = new QVBoxLayout();
-    m_nicknameEdit = new QLineEdit(profileCard);
-    m_nicknameEdit->setMaxLength(20);
-    m_nicknameEdit->setPlaceholderText(QStringLiteral("昵称（1-20 个字符）"));
-    nameColumn->addWidget(m_nicknameEdit);
+    m_nicknameLabel = new QLabel(profileCard);
+    m_nicknameLabel->setObjectName(QStringLiteral("cardTitle"));
+    nameColumn->addWidget(m_nicknameLabel);
     m_phoneLabel = new QLabel(profileCard);
     m_phoneLabel->setObjectName(QStringLiteral("hint"));
     nameColumn->addWidget(m_phoneLabel);
@@ -109,14 +67,11 @@ MyPage::MyPage(SocketClient *client, QWidget *parent)
     profileLayout->addLayout(profileTopRow);
 
     auto *profileButtons = new QHBoxLayout();
-    m_saveNicknameButton = new QPushButton(QStringLiteral("保存昵称"), profileCard);
-    m_saveNicknameButton->setProperty("class", QStringLiteral("smallPrimary"));
-    m_avatarButton = new QPushButton(QStringLiteral("更换头像"), profileCard);
-    m_avatarButton->setProperty("class", QStringLiteral("small"));
+    m_editProfileButton = new QPushButton(QStringLiteral("编辑资料"), profileCard);
+    m_editProfileButton->setProperty("class", QStringLiteral("smallPrimary"));
     m_passwordButton = new QPushButton(QStringLiteral("修改密码"), profileCard);
     m_passwordButton->setProperty("class", QStringLiteral("small"));
-    profileButtons->addWidget(m_saveNicknameButton);
-    profileButtons->addWidget(m_avatarButton);
+    profileButtons->addWidget(m_editProfileButton);
     profileButtons->addWidget(m_passwordButton);
     profileButtons->addStretch(1);
     profileLayout->addLayout(profileButtons);
@@ -187,8 +142,7 @@ MyPage::MyPage(SocketClient *client, QWidget *parent)
                 });
         dlg.exec();
     });
-    connect(m_saveNicknameButton, &QPushButton::clicked, this, &MyPage::onSaveNickname);
-    connect(m_avatarButton, &QPushButton::clicked, this, &MyPage::onChangeAvatar);
+    connect(m_editProfileButton, &QPushButton::clicked, this, &MyPage::openProfileEdit);
     connect(m_rechargeButton, &QPushButton::clicked, this, &MyPage::openRechargeDialog);
     connect(m_loadMoreButton, &QPushButton::clicked, this, &MyPage::onLoadMoreOrders);
     connect(m_logoutButton, &QPushButton::clicked, this, [this]() {
@@ -241,87 +195,31 @@ void MyPage::refreshProfile()
 
 void MyPage::renderProfile()
 {
+    m_nicknameLabel->setText(m_user.nickname);
     m_phoneLabel->setText(QStringLiteral("手机号：%1 · 状态：%2")
                               .arg(m_user.phone, ui::userStatusText(m_user.status)));
-    m_nicknameEdit->setText(m_user.nickname);
     m_balanceLabel->setText(QStringLiteral("¥%1").arg(m_user.balance, 0, 'f', 2));
     emit balanceChanged(m_user.balance);
     if (m_user.hasAvatar) {
         QPixmap pix;
         if (pix.loadFromData(m_user.avatarBytes))
-            m_avatarLabel->setPixmap(roundedAvatar(pix, 64));
+            m_avatarLabel->setPixmap(avatar::roundedAvatar(pix, 64));
     } else {
         m_avatarLabel->setPixmap(QPixmap());
         m_avatarLabel->setText(QStringLiteral("头像"));
     }
 }
 
-void MyPage::onSaveNickname()
+void MyPage::openProfileEdit()
 {
-    const QString nickname = m_nicknameEdit->text().trimmed();
-    if (nickname.isEmpty() || nickname.size() > 20) {
-        QMessageBox::warning(this, QStringLiteral("保存昵称"),
-                             QStringLiteral("昵称长度须为 1-20 个字符"));
+    if (!m_hasUser)
         return;
-    }
-    if (nickname == m_user.nickname)
-        return;
-    m_saveNicknameButton->setEnabled(false);
-    m_client->sendRequest(QStringLiteral("user_profile_update"),
-                          QJsonObject{{QStringLiteral("nickname"), nickname}},
-                          [this](int code, const QString &msg, const QJsonObject &data) {
-                              m_saveNicknameButton->setEnabled(true);
-                              if (code != 0) {
-                                  QMessageBox::warning(this, QStringLiteral("保存昵称"),
-                                                       msg.isEmpty() ? QStringLiteral("保存失败") : msg);
-                                  return;
-                              }
-                              m_user = UserInfo::fromJson(data.value(QStringLiteral("user")).toObject());
-                              renderProfile();
-                              QMessageBox::information(this, QStringLiteral("保存昵称"), QStringLiteral("昵称已更新"));
-                          });
-}
-
-void MyPage::onChangeAvatar()
-{
-    const QString path = QFileDialog::getOpenFileName(
-        this, QStringLiteral("选择头像"), QString(),
-        QStringLiteral("图片文件 (*.jpg *.jpeg *.png)"));
-    if (path.isEmpty())
-        return;
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly)) {
-        QMessageBox::warning(this, QStringLiteral("更换头像"), QStringLiteral("无法读取所选文件"));
-        return;
-    }
-    const QByteArray bytes = file.readAll();
-    if (bytes.size() > kMaxAvatarBytes) {
-        QMessageBox::warning(this, QStringLiteral("更换头像"),
-                             QStringLiteral("头像文件不得超过 512 KiB"));
-        return;
-    }
-    QString mime;
-    if (!looksLikeJpegOrPng(bytes, &mime)) {
-        QMessageBox::warning(this, QStringLiteral("更换头像"),
-                             QStringLiteral("头像仅支持 JPEG 或 PNG 格式"));
-        return;
-    }
-    m_avatarButton->setEnabled(false);
-    const QJsonObject avatar{{QStringLiteral("mime"), mime},
-                             {QStringLiteral("base64"), QString::fromLatin1(bytes.toBase64())}};
-    m_client->sendRequest(QStringLiteral("user_profile_update"),
-                          QJsonObject{{QStringLiteral("avatar"), avatar}},
-                          [this](int code, const QString &msg, const QJsonObject &data) {
-                              m_avatarButton->setEnabled(true);
-                              if (code != 0) {
-                                  QMessageBox::warning(this, QStringLiteral("更换头像"),
-                                                       msg.isEmpty() ? QStringLiteral("上传失败") : msg);
-                                  return;
-                              }
-                              m_user = UserInfo::fromJson(data.value(QStringLiteral("user")).toObject());
-                              renderProfile();
-                              QMessageBox::information(this, QStringLiteral("更换头像"), QStringLiteral("头像已更新"));
-                          });
+    ProfileEditDialog dlg(m_client, m_user, this);
+    connect(&dlg, &ProfileEditDialog::profileUpdated, this, [this](const UserInfo &user) {
+        m_user = user;
+        renderProfile();
+    });
+    dlg.exec();
 }
 
 void MyPage::openRechargeDialog()
