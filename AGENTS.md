@@ -37,7 +37,12 @@
 ```bash
 # 以 server 为例（admin/client 同理，替换目录与 .pro 文件名）
 cd server && qmake server.pro && make -j$(nproc)
+
+# 推荐影子构建（产物不进源码目录，Qt Creator 默认即此方式）：
+mkdir build-server && cd build-server && qmake ../server/server.pro && make -j$(nproc)
 ```
+
+就地构建时各模块 `.pro` 已把中间产物收进 `.build/`、可执行文件收进 `bin/`（均已 gitignore），但仍以影子构建为准。
 
 - 提交前至少保证本模块 `qmake && make` 通过。
 - 涉及协议字段的改动，用最小客户端（如 `nc 127.0.0.1 8888` 发送单行 JSON）手工验证服务端响应后再提交。

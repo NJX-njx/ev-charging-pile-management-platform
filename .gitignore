@@ -47,3 +47,7 @@ release/
 
 # server 模块构建出的可执行文件
 /server/server
+
+# qmake 就地构建的中间产物目录（.pro 中 OBJECTS_DIR/MOC_DIR 等）
+.build/
+/server/bin/
