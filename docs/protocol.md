@@ -4,6 +4,8 @@
 
 本协议覆盖需求矩阵冻结的五个模块：`client`、`admin`、`server`、`web` 和 `docs`。项目说明书中的机器学习智能分析属于扩展设想，不在当前协议范围内。
 
+**v2（9 月 5 日，对应需求矩阵 51 项版）变更摘要**：用户登录改为「手机号+密码」或「手机号+模拟验证码」双方式并新增验证码请求、密码重置与修改消息；管理端新增电桩增改删、站点修改/删除、用户增改删与重置密码、订单查询与详情、管理员改密码；`station_list` 改为分页 + 站名搜索（**破坏性变更**）；站点/电桩/用户改为逻辑删除（见 3.4）；`UserSummary` 增加 `hasPassword`；新增错误码 `1005`。
+
 ## 1. 通信边界
 
 | 调用方 | 服务 | 协议 | 默认地址 | 用途 |
@@ -66,7 +68,7 @@
 
 ### 2.3 会话与权限
 
-- 新连接初始为未登录状态，只允许 `ping`、`user_login` 和 `admin_login`。
+- 新连接初始为未登录状态，只允许 `ping`、`user_login`、`user_code_request`、`user_password_reset` 和 `admin_login`。
 - `user_login` 成功后，会话角色为 `user`；`admin_login` 成功后，会话角色为 `admin`。
 - 一个连接只能绑定一个角色和一个账号。切换账号或角色时应断开并新建连接。
 - 除登录响应外，客户端身份以服务端会话为准。客户端不得在业务请求中提交 `userId` 或 `adminId` 冒充其他账号。
@@ -81,6 +83,7 @@
 | 字段命名 | camelCase |
 | ID | 正整数 |
 | 手机号 | 字符串，正则 `^1\d{10}$` |
+| 密码 | 字符串，长度 6 至 20，不含空白字符 |
 | 金额 | JSON number，单位元，业务精度 2 位小数 |
 | 电量 | JSON number，单位 kWh，业务精度 3 位小数 |
 | 功率 | JSON number，单位 kW |
@@ -108,13 +111,15 @@
 用户摘要 `UserSummary`：
 
 ```json
-{"userId":1,"phone":"13800001234","nickname":"用户1234","balance":86.50,"regTime":"2026-09-01T10:20:30+08:00","status":"normal"}
+{"userId":1,"phone":"13800001234","nickname":"用户1234","balance":86.50,"regTime":"2026-09-01T10:20:30+08:00","status":"normal","hasPassword":true}
 ```
+
+- `hasPassword` 表示该用户是否已设置登录密码；自动注册的新用户为 `false`，客户端据此引导设置密码。
 
 用户资料 `UserProfile` 在用户摘要基础上增加头像。没有头像时 `avatar` 为 `null`：
 
 ```json
-{"userId":1,"phone":"13800001234","nickname":"用户1234","balance":86.50,"regTime":"2026-09-01T10:20:30+08:00","status":"normal","avatar":{"mime":"image/png","base64":"iVBORw0KGgo..."}}
+{"userId":1,"phone":"13800001234","nickname":"用户1234","balance":86.50,"regTime":"2026-09-01T10:20:30+08:00","status":"normal","hasPassword":true,"avatar":{"mime":"image/png","base64":"iVBORw0KGgo..."}}
 ```
 
 站点摘要 `StationSummary`：
@@ -140,15 +145,27 @@
 
 - `unitPrice` 是预约时保存的站点电价快照，之后站点价格变化不影响该订单。
 - 尚未发生的时间、能耗和金额字段返回 `null`。
+- 管理端订单消息（`admin_order_list`、`admin_order_detail`）在 `Order` 基础上附加 `userPhone`（下单用户手机号）字段。
+
+### 3.4 逻辑删除
+
+- 站点、电桩、用户均只做逻辑删除（数据库保留删除标记），禁止物理删除。
+- 被逻辑删除的记录不再出现在任何列表、详情与统计接口中（含 Web 数据大屏）：`nearby_station_list`、`station_list`、`station_detail`、`pile_list`、`pile_status_overview`、`user_list`、`/api/v1/dashboard/overview` 等一律排除。
+- 对已删除目标的操作视为不存在：`station_detail` / `charge_reserve` / `pile_update` 等返回 `2002`。
+- 历史订单数据保留可查：`user_order_list`、`admin_order_list`、`admin_order_detail` 仍返回关联已删除站点/电桩/用户的订单，并正常展示其名称快照。
+- 已删除用户的手机号、已删除电桩的编号仍占用唯一性：该手机号登录返回 `1005`，注册/新增时冲突返回 `2001`。
 
 ## 4. 消息总表
 
 | 类型 | 允许角色 | 作用 |
 |---|---|---|
 | `ping` | 未登录、用户、管理员 | 心跳 |
-| `user_login` | 未登录 | 手机号登录或自动注册 |
+| `user_login` | 未登录 | 手机号+密码 或 手机号+验证码 登录，自动注册 |
+| `user_code_request` | 未登录 | 获取模拟短信验证码 |
+| `user_password_reset` | 未登录 | 凭验证码重置密码（忘记密码） |
 | `user_profile_get` | 用户 | 获取个人资料 |
 | `user_profile_update` | 用户 | 修改昵称或头像 |
+| `user_password_update` | 用户 | 登录态修改密码，或首次设置密码 |
 | `wallet_recharge` | 用户 | 模拟充值 |
 | `nearby_station_list` | 用户 | 按距离查询附近站点 |
 | `station_detail` | 用户、管理员 | 查询站点及站内电桩 |
@@ -160,15 +177,27 @@
 | `charge_cancel` | 用户 | 取消尚未开始的预约 |
 | `user_order_list` | 用户 | 查询自己的订单记录 |
 | `admin_login` | 未登录 | 管理员登录 |
+| `admin_password_update` | 管理员 | 管理员修改本人密码 |
 | `revenue_summary` | 管理员 | 今日、本月和总营收 |
 | `revenue_trend` | 管理员 | 近 7 日或 30 日营收趋势 |
 | `pile_status_overview` | 管理员 | 电桩状态数量 |
 | `pile_list` | 管理员 | 查询电桩列表 |
 | `pile_restart` | 管理员 | 模拟远程重启故障电桩 |
-| `station_list` | 管理员 | 查询全部站点 |
+| `pile_add` | 管理员 | 在站点下新增电桩 |
+| `pile_update` | 管理员 | 修改电桩类型与功率 |
+| `pile_delete` | 管理员 | 逻辑删除电桩 |
+| `station_list` | 管理员 | 分页查询站点，支持站名搜索 |
 | `station_add` | 管理员 | 新增站点和模拟电桩 |
+| `station_update` | 管理员 | 修改站点信息 |
+| `station_delete` | 管理员 | 逻辑删除站点及站内电桩 |
 | `user_list` | 管理员 | 查询用户 |
 | `user_set_status` | 管理员 | 冻结或解冻用户 |
+| `user_add` | 管理员 | 新增用户 |
+| `user_update` | 管理员 | 修改用户昵称或手机号 |
+| `user_reset_password` | 管理员 | 重置用户密码为初始密码 |
+| `user_delete` | 管理员 | 逻辑删除用户 |
+| `admin_order_list` | 管理员 | 分页组合筛选查询全部订单 |
+| `admin_order_detail` | 管理员 | 订单完整明细 |
 
 ## 5. 通用消息
 
@@ -192,20 +221,25 @@
 
 ### 6.1 user_login 手机号登录或自动注册
 
-请求：
+支持两种认证方式，`password` 与 `code` 二选一，同时缺省或同时提供返回 `2001`：
 
 ```json
-{"seq":2,"type":"user_login","payload":{"phone":"13800001234"}}
+{"seq":2,"type":"user_login","payload":{"phone":"13800001234","password":"abc123"}}
+```
+
+```json
+{"seq":2,"type":"user_login","payload":{"phone":"13800001234","code":"483920"}}
 ```
 
 响应：
 
 ```json
-{"seq":2,"type":"user_login","code":0,"msg":"ok","data":{"isNew":false,"user":{"userId":1,"phone":"13800001234","nickname":"用户1234","balance":86.50,"regTime":"2026-09-01T10:20:30+08:00","status":"normal","avatar":null}}}
+{"seq":2,"type":"user_login","code":0,"msg":"ok","data":{"isNew":false,"user":{"userId":1,"phone":"13800001234","nickname":"用户1234","balance":86.50,"regTime":"2026-09-01T10:20:30+08:00","status":"normal","hasPassword":true,"avatar":null}}}
 ```
 
-- 手机号不存在时，服务端自动创建用户，默认昵称为“用户”加手机号后 4 位，余额为 `0`，状态为 `normal`，并返回 `isNew=true`。
-- 手机号格式非法返回 `2001`；账号已冻结返回 `1002`。
+- 手机号不存在时，服务端自动创建用户（两种认证方式均如此）：默认昵称为“用户”加手机号后 4 位，余额为 `0`，状态为 `normal`，未设置密码（`hasPassword=false`），并返回 `isNew=true`。客户端对 `hasPassword=false` 的用户应引导其设置登录密码（见 `user_password_update`）。
+- 验证码方式登录成功即消费该验证码（一次性）。
+- 手机号格式非法返回 `2001`；密码错误或验证码错误/过期/不存在返回 `1001`；账号已冻结返回 `1002`；账号已被删除返回 `1005`。
 
 ### 6.2 user_profile_get 获取个人资料
 
@@ -218,7 +252,7 @@
 响应：
 
 ```json
-{"seq":3,"type":"user_profile_get","code":0,"msg":"ok","data":{"user":{"userId":1,"phone":"13800001234","nickname":"用户1234","balance":86.50,"regTime":"2026-09-01T10:20:30+08:00","status":"normal","avatar":null}}}
+{"seq":3,"type":"user_profile_get","code":0,"msg":"ok","data":{"user":{"userId":1,"phone":"13800001234","nickname":"用户1234","balance":86.50,"regTime":"2026-09-01T10:20:30+08:00","status":"normal","hasPassword":true,"avatar":null}}}
 ```
 
 ### 6.3 user_profile_update 修改资料
@@ -232,7 +266,7 @@
 响应返回更新后的完整资料：
 
 ```json
-{"seq":4,"type":"user_profile_update","code":0,"msg":"ok","data":{"user":{"userId":1,"phone":"13800001234","nickname":"小宋","balance":86.50,"regTime":"2026-09-01T10:20:30+08:00","status":"normal","avatar":{"mime":"image/jpeg","base64":"/9j/4AAQSk..."}}}}
+{"seq":4,"type":"user_profile_update","code":0,"msg":"ok","data":{"user":{"userId":1,"phone":"13800001234","nickname":"小宋","balance":86.50,"regTime":"2026-09-01T10:20:30+08:00","status":"normal","hasPassword":true,"avatar":{"mime":"image/jpeg","base64":"/9j/4AAQSk..."}}}}
 ```
 
 - `nickname` 去除首尾空白后长度为 1 至 20 个字符。
@@ -289,7 +323,7 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 {"seq":7,"type":"station_detail","code":0,"msg":"ok","data":{"station":{"stationId":1,"name":"星海广场站","address":"沙河口区星海广场","lng":121.594,"lat":38.881,"pricePerKwh":1.20,"pileTotal":10,"pileIdle":6,"onlineRate":0.90},"piles":[{"pileId":101,"code":"P-0101","stationId":1,"stationName":"星海广场站","type":"fast","powerKw":60.0,"status":"idle","chargeCount":152,"chargeMinutes":6040}]}}
 ```
 
-站点不存在返回 `2002`。`piles` 按 `code` 升序。
+站点不存在（含已删除）返回 `2002`。`piles` 按 `code` 升序，不含已删除电桩。
 
 ### 6.7 active_order_get 查询未完成订单
 
@@ -328,7 +362,7 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 ```
 
 - 服务端必须在一个数据库事务中确认用户无未完成订单、电桩为 `idle`、创建订单并把电桩改为 `in_use`。
-- 用户已有未完成订单返回 `3005`；电桩不是 `idle` 返回 `3003`；电桩不存在返回 `2002`。
+- 用户已有未完成订单返回 `3005`；电桩不是 `idle` 返回 `3003`；电桩不存在（含已删除）返回 `2002`。
 
 ### 6.9 charge_start 开始充电
 
@@ -412,7 +446,64 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 ```
 
 - `page` 默认 `1`，`pageSize` 默认 `20`，范围 1 至 100。
-- 只返回当前用户的订单，按 `reservedAt` 降序、`orderId` 降序。
+- 只返回当前用户的订单（含关联已删除站点/电桩的订单），按 `reservedAt` 降序、`orderId` 降序。
+
+### 6.14 user_code_request 获取模拟验证码
+
+获取登录/重置密码用的模拟短信验证码。不调用外部短信接口，验证码直接在响应中回显（模拟下发）。
+
+请求：
+
+```json
+{"seq":2,"type":"user_code_request","payload":{"phone":"13800001234"}}
+```
+
+响应：
+
+```json
+{"seq":2,"type":"user_code_request","code":0,"msg":"ok","data":{"code":"483920","validSec":300}}
+```
+
+- 验证码为 6 位数字，有效期 5 分钟，一次性使用（验证成功即失效）。
+- 同一手机号重复请求会使旧验证码立即作废，以最新一条为准。
+- 手机号格式非法返回 `2001`；该手机号属于已删除用户返回 `1005`。手机号不存在时也可获取验证码（用于自动注册）。
+
+### 6.15 user_password_reset 凭验证码重置密码
+
+忘记密码时使用，无需登录。
+
+请求：
+
+```json
+{"seq":3,"type":"user_password_reset","payload":{"phone":"13800001234","code":"483920","newPassword":"abc123"}}
+```
+
+响应：
+
+```json
+{"seq":3,"type":"user_password_reset","code":0,"msg":"ok","data":{"phone":"13800001234"}}
+```
+
+- 验证码错误或过期返回 `1001`；手机号不存在返回 `2002`；已删除用户返回 `1005`；新密码不符合规则返回 `2001`。
+- 成功后验证码即失效；密码以带盐哈希保存。
+
+### 6.16 user_password_update 修改或首次设置密码
+
+登录状态下使用。已有密码的用户必须提供 `oldPassword` 并校验通过；尚未设置密码（`hasPassword=false`，自动注册的新用户）可省略 `oldPassword` 直接设置。
+
+请求：
+
+```json
+{"seq":4,"type":"user_password_update","payload":{"oldPassword":"abc123","newPassword":"def456"}}
+```
+
+响应：
+
+```json
+{"seq":4,"type":"user_password_update","code":0,"msg":"ok","data":{"hasPassword":true}}
+```
+
+- 原密码错误或缺失（对已设密码用户）返回 `1001`；新密码不符合规则或与原密码相同返回 `2001`。
 
 ## 7. Qt 管理端消息
 
@@ -479,7 +570,7 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 {"seq":5,"type":"pile_status_overview","code":0,"msg":"ok","data":{"total":46,"idle":32,"inUse":11,"fault":3}}
 ```
 
-管理端根据 `total` 计算各状态占比；`total=0` 时占比显示为 `0`。
+管理端根据 `total` 计算各状态占比；`total=0` 时占比显示为 `0`。已删除电桩不计入。
 
 ### 7.5 pile_list 电桩列表
 
@@ -497,7 +588,7 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 
 - `stationId` 可省略或为 `0`，表示全部站点；正整数表示按站点筛选。
 - `status` 可省略或为 `null`，表示全部状态；否则必须是电桩状态枚举。
-- 结果按 `stationId`、`code` 升序。
+- 结果按 `stationId`、`code` 升序，不分页，不含已删除电桩。
 
 ### 7.6 pile_restart 模拟远程重启
 
@@ -516,21 +607,23 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 - 只允许重启 `fault` 且没有关联未完成订单的电桩；否则返回 `3002`。
 - 成功后状态改为 `idle`，管理端重新请求列表和状态总览。
 
-### 7.7 station_list 站点列表
+### 7.7 station_list 站点列表（v2 改为分页 + 搜索，破坏性变更）
 
 请求：
 
 ```json
-{"seq":8,"type":"station_list","payload":{}}
+{"seq":8,"type":"station_list","payload":{"page":1,"pageSize":20,"nameKeyword":"星海"}}
 ```
 
 响应：
 
 ```json
-{"seq":8,"type":"station_list","code":0,"msg":"ok","data":{"stations":[{"stationId":1,"name":"星海广场站","address":"沙河口区星海广场","lng":121.594,"lat":38.881,"pricePerKwh":1.20,"pileTotal":10,"pileIdle":6,"onlineRate":0.90}]}}
+{"seq":8,"type":"station_list","code":0,"msg":"ok","data":{"page":1,"pageSize":20,"total":1,"stations":[{"stationId":1,"name":"星海广场站","address":"沙河口区星海广场","lng":121.594,"lat":38.881,"pricePerKwh":1.20,"pileTotal":10,"pileIdle":6,"onlineRate":0.90}]}}
 ```
 
-结果按 `stationId` 升序。查看站内电桩时使用共享消息 `station_detail`。
+- `page` 默认 `1`，`pageSize` 默认 `20`，范围 1 至 100。
+- `nameKeyword` 可省略或为空字符串，表示全部站点；非空时按站名包含匹配。
+- 结果按 `stationId` 升序，不含已删除站点。查看站内电桩时使用共享消息 `station_detail`。
 
 ### 7.8 station_add 新增站点
 
@@ -561,10 +654,10 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 响应：
 
 ```json
-{"seq":10,"type":"user_list","code":0,"msg":"ok","data":{"users":[{"userId":1,"phone":"13800001234","nickname":"用户1234","balance":86.50,"regTime":"2026-09-01T10:20:30+08:00","status":"normal"}]}}
+{"seq":10,"type":"user_list","code":0,"msg":"ok","data":{"users":[{"userId":1,"phone":"13800001234","nickname":"用户1234","balance":86.50,"regTime":"2026-09-01T10:20:30+08:00","status":"normal","hasPassword":true}]}}
 ```
 
-`phoneKeyword` 可省略或为空字符串，表示全部用户；非空时只允许数字并按手机号包含匹配。结果按 `userId` 升序，不返回头像 Base64。
+`phoneKeyword` 可省略或为空字符串，表示全部用户；非空时只允许数字并按手机号包含匹配。结果按 `userId` 升序，不返回头像 Base64，不含已删除用户。
 
 ### 7.10 user_set_status 冻结或解冻用户
 
@@ -583,6 +676,212 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 - `status` 只能为 `frozen` 或 `normal`。
 - 为避免订单和电桩被锁死，存在 `reserved`、`charging` 或 `pending_payment` 订单的用户不能被冻结，返回 `3002`。
 - 已冻结用户登录返回 `1002`；已建立的旧连接下一次业务请求也返回 `1002` 并由服务端关闭连接。
+
+### 7.11 admin_password_update 管理员修改密码
+
+请求：
+
+```json
+{"seq":3,"type":"admin_password_update","payload":{"oldPassword":"123456","newPassword":"admin888"}}
+```
+
+响应：
+
+```json
+{"seq":3,"type":"admin_password_update","code":0,"msg":"ok","data":{"adminId":1}}
+```
+
+原密码错误返回 `1001`；新密码不符合规则（6 至 20 位、不含空白字符）返回 `2001`。修改成功后下次登录使用新密码；已建立的连接保持有效。
+
+### 7.12 pile_add 新增电桩
+
+请求：
+
+```json
+{"seq":4,"type":"pile_add","payload":{"stationId":1,"code":"P-9001","type":"fast","powerKw":60.0}}
+```
+
+响应：
+
+```json
+{"seq":4,"type":"pile_add","code":0,"msg":"ok","data":{"pile":{"pileId":153,"code":"P-9001","stationId":1,"stationName":"星海广场站","type":"fast","powerKw":60.0,"status":"idle","chargeCount":0,"chargeMinutes":0}}}
+```
+
+- 站点不存在（含已删除）返回 `2002`；`code` 去除首尾空白后长度 1 至 20 且全局唯一（含已删除电桩的编号），冲突返回 `2001`；`type` 必须是电桩类型枚举；`powerKw` 必须大于 `0`。
+- 初始状态为 `idle`，累计次数与时长为 `0`。
+
+### 7.13 pile_update 修改电桩
+
+只允许修改 `type` 与 `powerKw`，至少提供其一；编号与所属站点不可修改。
+
+请求：
+
+```json
+{"seq":5,"type":"pile_update","payload":{"pileId":153,"type":"slow","powerKw":7.0}}
+```
+
+响应：
+
+```json
+{"seq":5,"type":"pile_update","code":0,"msg":"ok","data":{"pile":{"pileId":153,"code":"P-9001","stationId":1,"stationName":"星海广场站","type":"slow","powerKw":7.0,"status":"idle","chargeCount":0,"chargeMinutes":0}}}
+```
+
+电桩不存在（含已删除）返回 `2002`；存在关联未完成订单（电桩 `in_use`）返回 `3002`；参数非法返回 `2001`。
+
+### 7.14 pile_delete 删除电桩
+
+请求：
+
+```json
+{"seq":6,"type":"pile_delete","payload":{"pileId":153}}
+```
+
+响应：
+
+```json
+{"seq":6,"type":"pile_delete","code":0,"msg":"ok","data":{"pileId":153,"deleted":true}}
+```
+
+仅允许删除 `idle` 且无关联未完成订单的电桩，否则返回 `3002`；电桩不存在（含已删除）返回 `2002`。逻辑删除，历史订单保留。
+
+### 7.15 station_update 修改站点
+
+只允许修改 `name`、`address`、`pricePerKwh`，至少提供其一；`lng`、`lat` 与 `stationId` 不可修改，提交也会被忽略。
+
+请求：
+
+```json
+{"seq":7,"type":"station_update","payload":{"stationId":1,"name":"星海广场充电站","pricePerKwh":1.10}}
+```
+
+响应：
+
+```json
+{"seq":7,"type":"station_update","code":0,"msg":"ok","data":{"station":{"stationId":1,"name":"星海广场充电站","address":"沙河口区星海广场","lng":121.594,"lat":38.881,"pricePerKwh":1.10,"pileTotal":10,"pileIdle":6,"onlineRate":0.90}}}
+```
+
+校验规则与 `station_add` 一致；站点不存在（含已删除）返回 `2002`；参数非法返回 `2001`。已有订单的 `unitPrice` 快照不受影响。
+
+### 7.16 station_delete 删除站点
+
+请求：
+
+```json
+{"seq":8,"type":"station_delete","payload":{"stationId":1}}
+```
+
+响应：
+
+```json
+{"seq":8,"type":"station_delete","code":0,"msg":"ok","data":{"stationId":1,"deleted":true,"removedPileCount":10}}
+```
+
+- 服务端在一个事务中逻辑删除站点及其站内全部电桩；`removedPileCount` 为被一并删除的电桩数。
+- 站内存在关联未完成订单的电桩时拒绝删除，返回 `3002`；站点不存在（含已删除）返回 `2002`。
+- 历史订单数据保留可查。
+
+### 7.17 user_add 新增用户
+
+请求：
+
+```json
+{"seq":9,"type":"user_add","payload":{"phone":"13800005678","nickname":"新用户","password":"123456"}}
+```
+
+响应：
+
+```json
+{"seq":9,"type":"user_add","code":0,"msg":"ok","data":{"user":{"userId":8,"phone":"13800005678","nickname":"新用户","balance":0.00,"regTime":"2026-09-05T10:20:30+08:00","status":"normal","hasPassword":true}}}
+```
+
+- `phone` 必须符合手机号格式且全局唯一（含已删除用户），冲突返回 `2001`；`nickname` 去除首尾空白后长度 1 至 20；`password` 可省略，默认为 `123456`。
+- 初始余额 `0`、状态 `normal`。
+
+### 7.18 user_update 修改用户信息
+
+只允许修改 `phone` 与 `nickname`，至少提供其一；用户 ID、注册时间不可修改；余额不可编辑。
+
+请求：
+
+```json
+{"seq":10,"type":"user_update","payload":{"userId":8,"phone":"13800009999","nickname":"改名用户"}}
+```
+
+响应：
+
+```json
+{"seq":10,"type":"user_update","code":0,"msg":"ok","data":{"user":{"userId":8,"phone":"13800009999","nickname":"改名用户","balance":0.00,"regTime":"2026-09-05T10:20:30+08:00","status":"normal","hasPassword":true}}}
+```
+
+用户不存在（含已删除）返回 `2002`；新手机号格式非法或不唯一（含已删除用户占用）返回 `2001`。
+
+### 7.19 user_reset_password 重置用户密码
+
+请求：
+
+```json
+{"seq":11,"type":"user_reset_password","payload":{"userId":8}}
+```
+
+响应：
+
+```json
+{"seq":11,"type":"user_reset_password","code":0,"msg":"ok","data":{"userId":8,"password":"123456"}}
+```
+
+将用户密码重置为初始密码 `123456`，响应回显该初始密码便于管理员告知用户。用户不存在（含已删除）返回 `2002`。
+
+### 7.20 user_delete 删除用户
+
+请求：
+
+```json
+{"seq":12,"type":"user_delete","payload":{"userId":8}}
+```
+
+响应：
+
+```json
+{"seq":12,"type":"user_delete","code":0,"msg":"ok","data":{"userId":8,"deleted":true}}
+```
+
+存在未完成订单（`reserved` / `charging` / `pending_payment`）的用户不可删除，返回 `3002`；用户不存在（含已删除）返回 `2002`。逻辑删除：该手机号之后登录返回 `1005`，历史订单保留。
+
+### 7.21 admin_order_list 订单列表查询
+
+请求：
+
+```json
+{"seq":13,"type":"admin_order_list","payload":{"page":1,"pageSize":20,"phoneKeyword":"138","status":"completed","dateFrom":"2026-09-01","dateTo":"2026-09-05"}}
+```
+
+响应：
+
+```json
+{"seq":13,"type":"admin_order_list","code":0,"msg":"ok","data":{"page":1,"pageSize":20,"total":1,"orders":[{"orderId":10001,"userPhone":"13800001234","stationId":1,"stationName":"星海广场站","pileId":101,"pileCode":"P-0101","status":"completed","reservedAt":"2026-09-04T10:00:00+08:00","startTime":"2026-09-04T10:02:00+08:00","endTime":"2026-09-04T10:32:00+08:00","settledAt":"2026-09-04T10:33:00+08:00","energyKwh":20.000,"unitPrice":1.20,"amount":24.00}]}}
+```
+
+- `page` 默认 `1`，`pageSize` 默认 `20`，范围 1 至 100。
+- `phoneKeyword` 可省略或为空，按下单用户手机号包含匹配（只允许数字）。
+- `status` 可省略或为 `null`；否则必须是订单状态枚举。
+- `dateFrom`、`dateTo` 可省略或为 `null`，格式 `yyyy-MM-dd`，按 `reservedAt` 所在自然日（Asia/Shanghai）闭区间筛选；`dateFrom` 晚于 `dateTo` 返回 `2001`。
+- 结果按 `reservedAt` 降序、`orderId` 降序；包含已删除站点/电桩/用户的历史订单。
+
+### 7.22 admin_order_detail 订单详情
+
+请求：
+
+```json
+{"seq":14,"type":"admin_order_detail","payload":{"orderId":10001}}
+```
+
+响应：
+
+```json
+{"seq":14,"type":"admin_order_detail","code":0,"msg":"ok","data":{"order":{"orderId":10001,"userPhone":"13800001234","stationId":1,"stationName":"星海广场站","pileId":101,"pileCode":"P-0101","status":"completed","reservedAt":"2026-09-04T10:00:00+08:00","startTime":"2026-09-04T10:02:00+08:00","endTime":"2026-09-04T10:32:00+08:00","settledAt":"2026-09-04T10:33:00+08:00","energyKwh":20.000,"unitPrice":1.20,"amount":24.00},"user":{"userId":1,"phone":"13800001234","nickname":"用户1234","balance":62.50,"regTime":"2026-09-01T10:20:30+08:00","status":"normal","hasPassword":true},"station":{"stationId":1,"name":"星海广场站","address":"沙河口区星海广场","lng":121.594,"lat":38.881,"pricePerKwh":1.20,"pileTotal":10,"pileIdle":6,"onlineRate":0.90},"pile":{"pileId":101,"code":"P-0101","stationId":1,"stationName":"星海广场站","type":"fast","powerKw":60.0,"status":"idle","chargeCount":152,"chargeMinutes":6040}}}
+```
+
+订单不存在返回 `2002`。关联的站点/电桩/用户已被逻辑删除时仍正常返回其数据。
 
 ## 8. Web 数据大屏 HTTP 接口
 
@@ -638,7 +937,7 @@ Accept: application/json
 - 订单数只统计已完成订单；`today` 按 `settledAt` 当日计算。
 - 充电量只统计已完成订单的 `energyKwh`。
 - `revenueTrend.points` 必须补齐无营收日期，规则与 `revenue_trend` 相同。
-- `stations` 按 `stationId` 升序。
+- `pileStatus` 与 `stations` 不含已删除的电桩与站点；`stations` 按 `stationId` 升序。
 
 ### 8.3 GET /health 服务状态
 
@@ -686,14 +985,15 @@ Accept: application/json
 | code | 含义 | 典型场景 |
 |---|---|---|
 | `0` | 成功 | 请求完成 |
-| `1001` | 认证失败 | 管理员用户名或密码错误 |
+| `1001` | 认证失败 | 管理员或用户密码错误、验证码错误或过期 |
 | `1002` | 账号已冻结 | 冻结用户登录或继续操作 |
 | `1003` | 未登录 | 未建立会话就调用受保护消息 |
 | `1004` | 角色无权限 | 用户调用管理消息，或管理员调用用户消息 |
-| `2001` | 参数缺失或格式非法 | 手机号、金额、枚举、分页或经纬度非法 |
-| `2002` | 目标不存在或不属于当前账号 | 找不到站点、电桩或订单 |
+| `1005` | 账号已删除 | 已删除用户的手机号登录或请求验证码 |
+| `2001` | 参数缺失或格式非法 | 手机号、密码、金额、枚举、分页或经纬度非法；手机号/电桩编号唯一性冲突 |
+| `2002` | 目标不存在或不属于当前账号 | 找不到站点、电桩、用户或订单（含已逻辑删除的目标） |
 | `3001` | 消息无法解析或类型未知 | JSON 错误、信封错误、未知 `type` |
-| `3002` | 状态冲突 | 订单步骤错误、重启非故障桩、冻结有活动订单的用户 |
+| `3002` | 状态冲突 | 订单步骤错误、重启非故障桩、冻结有活动订单的用户、删除有活动订单的用户或有占用电桩的站点 |
 | `3003` | 电桩不可用 | 预约在用或故障电桩 |
 | `3004` | 余额不足 | 结算金额超过钱包余额 |
 | `3005` | 已有未完成订单 | 重复预约 |
@@ -706,8 +1006,9 @@ Accept: application/json
 
 - 客户端发送前确保 JSON 是单行 UTF-8，并在末尾追加 `\n`。
 - 服务端为每个 TCP 连接保存独立接收缓冲区、`seq` 关联信息和登录会话。
-- 服务端使用参数化 SQL；密码至少保存为带盐哈希，不以明文落库。
-- 预约、取消、结算、批量新增站点等跨表修改必须使用数据库事务。
+- 服务端使用参数化 SQL；用户密码与管理员密码均以带盐哈希保存，不以明文落库；验证码只在服务端内存或专用表中保存，有效期 5 分钟、一次性使用。
+- 预约、取消、结算、批量新增站点、站点删除、电桩与用户增改删等跨表修改必须使用数据库事务。
+- 站点、电桩、用户只做逻辑删除（删除标记），历史订单保留可查；已删除记录不再出现在任何列表与统计中。
 - 时间计算、今日和本月统计统一使用 `Asia/Shanghai`。
 - 管理端与 Web 大屏共享相同统计函数，避免相同指标口径不一致。
-- 联调至少覆盖：粘包、半包、非法 JSON、未知消息、断线重登、重复预约、错误状态顺序、余额不足、冻结账号、空列表和数据库异常。
+- 联调至少覆盖：粘包、半包、非法 JSON、未知消息、断线重登、重复预约、错误状态顺序、余额不足、冻结账号、已删除账号登录、验证码登录与密码重置、电桩/站点/用户增改删、管理端订单筛选、空列表和数据库异常。
