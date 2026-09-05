@@ -3,12 +3,13 @@
 #include <QDateTime>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QShowEvent>
-#include <QStackedWidget>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -16,13 +17,52 @@
 #include "ui/uienums.h"
 
 namespace {
-QLabel *makeRowValue(QWidget *parent, const QString &text)
+
+constexpr int kRefreshIntervalMs = 15000;
+
+QString formatElapsed(qint64 secs)
+{
+    const qint64 h = secs / 3600;
+    const qint64 m = (secs % 3600) / 60;
+    const qint64 s = secs % 60;
+    if (h > 0)
+        return QStringLiteral("%1:%2:%3")
+            .arg(h)
+            .arg(m, 2, 10, QLatin1Char('0'))
+            .arg(s, 2, 10, QLatin1Char('0'));
+    return QStringLiteral("%1:%2")
+        .arg(m, 2, 10, QLatin1Char('0'))
+        .arg(s, 2, 10, QLatin1Char('0'));
+}
+
+QString tickText(const Order &order)
+{
+    const QDateTime start = order.startDateTime();
+    if (!start.isValid())
+        return QStringLiteral("已充时长 --:--");
+    const qint64 secs = start.secsTo(QDateTime::currentDateTime());
+    if (secs < 0)
+        return QStringLiteral("已充时长 --:--");
+    QString text = QStringLiteral("已充时长 %1").arg(formatElapsed(secs));
+    if (order.powerKw > 0.0) {
+        const double hours = static_cast<double>(secs) / 3600.0;
+        const double cost = order.powerKw * hours * order.unitPrice;
+        text += QStringLiteral("｜预计花费 %1 元").arg(cost, 0, 'f', 2);
+    } else {
+        text += QStringLiteral("｜预计花费 --");
+    }
+    return text;
+}
+
+QLabel *makeHint(QWidget *parent, const QString &text)
 {
     auto *label = new QLabel(text, parent);
+    label->setObjectName(QStringLiteral("hint"));
     label->setWordWrap(true);
     return label;
 }
-}
+
+} // namespace
 
 ChargingPage::ChargingPage(SocketClient *client, QWidget *parent)
     : QWidget(parent)
@@ -41,128 +81,48 @@ ChargingPage::ChargingPage(SocketClient *client, QWidget *parent)
     headerRow->addWidget(refreshButton, 0);
     root->addLayout(headerRow);
 
-    m_stack = new QStackedWidget(this);
-    root->addWidget(m_stack, 1);
+    m_balanceLabel = makeHint(this, QString());
+    m_balanceLabel->setVisible(false);
+    root->addWidget(m_balanceLabel);
 
-    auto *emptyPage = new QWidget(m_stack);
-    auto *emptyLayout = new QVBoxLayout(emptyPage);
-    emptyLayout->setContentsMargins(0, 0, 0, 0);
-    emptyLayout->setSpacing(12);
-    emptyLayout->addStretch(1);
-    auto *emptyHint = new QLabel(QStringLiteral("当前没有进行中的订单"), emptyPage);
-    emptyHint->setObjectName(QStringLiteral("hint"));
-    emptyHint->setAlignment(Qt::AlignHCenter);
-    auto *gotoFind = new QPushButton(QStringLiteral("去找站"), emptyPage);
-    gotoFind->setProperty("class", QStringLiteral("primary"));
-    emptyLayout->addWidget(emptyHint);
-    emptyLayout->addWidget(gotoFind);
-    emptyLayout->addStretch(1);
-    m_stack->addWidget(emptyPage);
+    auto *scroll = new QScrollArea(this);
+    scroll->setWidgetResizable(true);
+    m_listContainer = new QWidget(scroll);
+    m_listLayout = new QVBoxLayout(m_listContainer);
+    m_listLayout->setContentsMargins(0, 0, 0, 0);
+    m_listLayout->setSpacing(12);
+    scroll->setWidget(m_listContainer);
+    root->addWidget(scroll, 1);
 
-    auto *reservedPage = new QWidget(m_stack);
-    auto *reservedLayout = new QVBoxLayout(reservedPage);
-    reservedLayout->setContentsMargins(0, 0, 0, 0);
-    reservedLayout->setSpacing(12);
-    auto *reservedCard = new QFrame(reservedPage);
-    reservedCard->setObjectName(QStringLiteral("card"));
-    auto *reservedCardLayout = new QVBoxLayout(reservedCard);
-    reservedCardLayout->setContentsMargins(16, 16, 16, 16);
-    reservedCardLayout->setSpacing(8);
-    auto *reservedTitle = new QLabel(QStringLiteral("已预约"), reservedCard);
-    reservedTitle->setObjectName(QStringLiteral("cardTitle"));
-    m_reservedInfo = makeRowValue(reservedCard, QString());
-    reservedCardLayout->addWidget(reservedTitle);
-    reservedCardLayout->addWidget(m_reservedInfo);
-    reservedLayout->addWidget(reservedCard);
-    m_startButton = new QPushButton(QStringLiteral("开始充电"), reservedPage);
-    m_startButton->setProperty("class", QStringLiteral("primary"));
-    m_cancelButton = new QPushButton(QStringLiteral("取消预约"), reservedPage);
-    reservedLayout->addWidget(m_startButton);
-    reservedLayout->addWidget(m_cancelButton);
-    reservedLayout->addStretch(1);
-    m_stack->addWidget(reservedPage);
+    m_tickTimer = new QTimer(this);
+    m_tickTimer->setInterval(1000);
+    connect(m_tickTimer, &QTimer::timeout, this, &ChargingPage::updateTick);
 
-    auto *chargingPageW = new QWidget(m_stack);
-    auto *chargingLayout = new QVBoxLayout(chargingPageW);
-    chargingLayout->setContentsMargins(0, 0, 0, 0);
-    chargingLayout->setSpacing(12);
-    auto *chargingCard = new QFrame(chargingPageW);
-    chargingCard->setObjectName(QStringLiteral("card"));
-    auto *chargingCardLayout = new QVBoxLayout(chargingCard);
-    chargingCardLayout->setContentsMargins(16, 16, 16, 16);
-    chargingCardLayout->setSpacing(8);
-    auto *chargingTitle = new QLabel(QStringLiteral("充电中"), chargingCard);
-    chargingTitle->setObjectName(QStringLiteral("cardTitle"));
-    m_elapsedLabel = new QLabel(QStringLiteral("00:00:00"), chargingCard);
-    m_elapsedLabel->setObjectName(QStringLiteral("metric"));
-    m_elapsedLabel->setAlignment(Qt::AlignHCenter);
-    m_chargingInfo = makeRowValue(chargingCard, QString());
-    auto *chargingHint = new QLabel(QStringLiteral("停止后将按实际充电量计费"), chargingCard);
-    chargingHint->setObjectName(QStringLiteral("hint"));
-    chargingCardLayout->addWidget(chargingTitle);
-    chargingCardLayout->addWidget(m_elapsedLabel);
-    chargingCardLayout->addWidget(m_chargingInfo);
-    chargingCardLayout->addWidget(chargingHint);
-    chargingLayout->addWidget(chargingCard);
-    m_stopButton = new QPushButton(QStringLiteral("停止充电"), chargingPageW);
-    m_stopButton->setProperty("class", QStringLiteral("primary"));
-    chargingLayout->addWidget(m_stopButton);
-    chargingLayout->addStretch(1);
-    m_stack->addWidget(chargingPageW);
-
-    auto *paymentPage = new QWidget(m_stack);
-    auto *paymentLayout = new QVBoxLayout(paymentPage);
-    paymentLayout->setContentsMargins(0, 0, 0, 0);
-    paymentLayout->setSpacing(12);
-    auto *paymentCard = new QFrame(paymentPage);
-    paymentCard->setObjectName(QStringLiteral("card"));
-    auto *paymentCardLayout = new QVBoxLayout(paymentCard);
-    paymentCardLayout->setContentsMargins(16, 16, 16, 16);
-    paymentCardLayout->setSpacing(8);
-    auto *paymentTitle = new QLabel(QStringLiteral("待结算"), paymentCard);
-    paymentTitle->setObjectName(QStringLiteral("cardTitle"));
-    m_paymentInfo = makeRowValue(paymentCard, QString());
-    m_paymentBalance = makeRowValue(paymentCard, QString());
-    paymentCardLayout->addWidget(paymentTitle);
-    paymentCardLayout->addWidget(m_paymentInfo);
-    paymentCardLayout->addWidget(m_paymentBalance);
-    paymentLayout->addWidget(paymentCard);
-    m_settleButton = new QPushButton(QStringLiteral("结算"), paymentPage);
-    m_settleButton->setProperty("class", QStringLiteral("primary"));
-    m_paymentRefreshButton = new QPushButton(QStringLiteral("刷新状态"), paymentPage);
-    paymentLayout->addWidget(m_settleButton);
-    paymentLayout->addWidget(m_paymentRefreshButton);
-    paymentLayout->addStretch(1);
-    m_stack->addWidget(paymentPage);
-
-    m_elapsedTimer = new QTimer(this);
-    m_elapsedTimer->setInterval(1000);
-    connect(m_elapsedTimer, &QTimer::timeout, this, &ChargingPage::updateElapsed);
+    m_refreshTimer = new QTimer(this);
+    m_refreshTimer->setInterval(kRefreshIntervalMs);
+    connect(m_refreshTimer, &QTimer::timeout, this, [this]() {
+        if (!m_busy)
+            refresh();
+    });
 
     connect(refreshButton, &QPushButton::clicked, this, &ChargingPage::refresh);
-    connect(gotoFind, &QPushButton::clicked, this, &ChargingPage::gotoFindStations);
-    connect(m_startButton, &QPushButton::clicked, this, [this]() {
-        doAction(QStringLiteral("charge_start"), m_order.orderId, QStringLiteral("开始充电"), false);
-    });
-    connect(m_cancelButton, &QPushButton::clicked, this, [this]() {
-        doAction(QStringLiteral("charge_cancel"), m_order.orderId, QStringLiteral("取消预约"), true);
-    });
-    connect(m_stopButton, &QPushButton::clicked, this, [this]() {
-        doAction(QStringLiteral("charge_stop"), m_order.orderId, QStringLiteral("停止充电"), true);
-    });
-    connect(m_settleButton, &QPushButton::clicked, this, [this]() {
-        doAction(QStringLiteral("charge_settle"), m_order.orderId, QStringLiteral("结算"), false);
-    });
-    connect(m_paymentRefreshButton, &QPushButton::clicked, this, &ChargingPage::refresh);
 
-    applyEmpty();
+    buildCards();
 }
 
 void ChargingPage::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
-    if (m_client->isLoggedIn())
+    if (m_client->isLoggedIn()) {
         refresh();
+        m_refreshTimer->start();
+    }
+}
+
+void ChargingPage::hideEvent(QHideEvent *event)
+{
+    QWidget::hideEvent(event);
+    m_refreshTimer->stop();
 }
 
 void ChargingPage::refresh()
@@ -176,86 +136,169 @@ void ChargingPage::refresh()
                                       QMessageBox::warning(this, QStringLiteral("刷新"), msg);
                                   return;
                               }
-                              const QJsonValue orderVal = data.value(QStringLiteral("order"));
-                              if (orderVal.isObject())
-                                  applyOrder(Order::fromJson(orderVal.toObject()));
-                              else
-                                  applyEmpty();
+                              // 协议 v2.2：未完成订单数组（reserved/charging/pending_payment）
+                              QList<Order> orders;
+                              const QJsonArray arr = data.value(QStringLiteral("orders")).toArray();
+                              orders.reserve(arr.size());
+                              for (const QJsonValue &v : arr)
+                                  orders.append(Order::fromJson(v.toObject()));
+                              applyOrders(orders);
                           });
 }
 
-void ChargingPage::applyEmpty()
+void ChargingPage::applyOrders(const QList<Order> &orders)
 {
-    m_hasOrder = false;
-    m_elapsedTimer->stop();
-    m_stack->setCurrentIndex(0);
-}
-
-void ChargingPage::applyOrder(const Order &order)
-{
-    m_order = order;
-    m_hasOrder = true;
-    const QString baseInfo = QStringLiteral("站点：%1\n电桩：%2 · 电价 ¥%3/kWh\n预约时间：%4")
-                                 .arg(order.stationName, order.pileCode)
-                                 .arg(order.unitPrice, 0, 'f', 2)
-                                 .arg(formatDateTime(order.reservedAt));
-    if (order.status == QLatin1String("reserved")) {
-        m_elapsedTimer->stop();
-        m_reservedInfo->setText(baseInfo);
-        m_stack->setCurrentIndex(1);
-    } else if (order.status == QLatin1String("charging")) {
-        m_chargingInfo->setText(baseInfo + QStringLiteral("\n开始时间：%1")
-                                             .arg(formatDateTime(order.startTime)));
-        m_stack->setCurrentIndex(2);
-        updateElapsed();
-        m_elapsedTimer->start();
-    } else if (order.status == QLatin1String("pending_payment")) {
-        m_elapsedTimer->stop();
-        m_paymentInfo->setText(QStringLiteral("站点：%1\n电桩：%2\n电量：%3 kWh · 单价 ¥%4/kWh\n金额：¥%5")
-                                   .arg(order.stationName, order.pileCode)
-                                   .arg(order.energyKwh, 0, 'f', 3)
-                                   .arg(order.unitPrice, 0, 'f', 2)
-                                   .arg(order.amount, 0, 'f', 2));
-        fetchBalance();
-        m_stack->setCurrentIndex(3);
+    m_orders = orders;
+    buildCards();
+    updateBalanceLabel();
+    bool anyCharging = false;
+    for (const Order &o : m_orders) {
+        if (o.status == QLatin1String("charging") && o.startDateTime().isValid()) {
+            anyCharging = true;
+            break;
+        }
+    }
+    if (anyCharging) {
+        updateTick();
+        m_tickTimer->start();
     } else {
-        applyEmpty();
+        m_tickTimer->stop();
     }
 }
 
-void ChargingPage::updateElapsed()
+void ChargingPage::buildCards()
 {
-    const QDateTime start = m_order.startDateTime();
-    if (!start.isValid())
+    m_tickLabels.clear();
+    while (QLayoutItem *item = m_listLayout->takeAt(0)) {
+        if (QWidget *w = item->widget())
+            w->deleteLater();
+        delete item;
+    }
+
+    if (m_orders.isEmpty()) {
+        auto *emptyHint = new QLabel(QStringLiteral("当前没有进行中的订单"), m_listContainer);
+        emptyHint->setObjectName(QStringLiteral("hint"));
+        emptyHint->setAlignment(Qt::AlignHCenter);
+        auto *gotoFind = new QPushButton(QStringLiteral("去找站"), m_listContainer);
+        gotoFind->setProperty("class", QStringLiteral("primary"));
+        connect(gotoFind, &QPushButton::clicked, this, &ChargingPage::gotoFindStations);
+        m_listLayout->addStretch(1);
+        m_listLayout->addWidget(emptyHint);
+        m_listLayout->addWidget(gotoFind);
+        m_listLayout->addStretch(1);
         return;
-    const qint64 secs = start.secsTo(QDateTime::currentDateTime());
-    if (secs < 0)
-        return;
-    const qint64 h = secs / 3600;
-    const qint64 m = (secs % 3600) / 60;
-    const qint64 s = secs % 60;
-    m_elapsedLabel->setText(QStringLiteral("%1:%2:%3")
-                                .arg(h, 2, 10, QLatin1Char('0'))
-                                .arg(m, 2, 10, QLatin1Char('0'))
-                                .arg(s, 2, 10, QLatin1Char('0')));
+    }
+
+    for (const Order &order : m_orders) {
+        auto *card = new QFrame(m_listContainer);
+        card->setObjectName(QStringLiteral("orderCard"));
+        auto *cardLayout = new QVBoxLayout(card);
+        cardLayout->setContentsMargins(16, 12, 16, 12);
+        cardLayout->setSpacing(6);
+
+        auto *topRow = new QHBoxLayout();
+        auto *name = new QLabel(order.stationName, card);
+        name->setObjectName(QStringLiteral("cardTitle"));
+        topRow->addWidget(name, 1);
+        auto *status = new QLabel(ui::orderStatusText(order.status), card);
+        ui::setState(status, order.status);
+        topRow->addWidget(status, 0);
+        cardLayout->addLayout(topRow);
+
+        QString info = QStringLiteral("电桩：%1 · 电价 ¥%2/kWh")
+                           .arg(order.pileCode)
+                           .arg(order.unitPrice, 0, 'f', 2);
+        if (order.powerKw > 0.0)
+            info += QStringLiteral(" · 功率 %1kW").arg(order.powerKw, 0, 'f', 0);
+        cardLayout->addWidget(new QLabel(info, card));
+        cardLayout->addWidget(makeHint(card, QStringLiteral("预约时间：%1")
+                                                 .arg(formatDateTime(order.reservedAt))));
+
+        auto *buttonRow = new QHBoxLayout();
+        if (order.status == QLatin1String("reserved")) {
+            auto *startButton = new QPushButton(QStringLiteral("开始充电"), card);
+            startButton->setProperty("class", QStringLiteral("smallPrimary"));
+            auto *cancelButton = new QPushButton(QStringLiteral("取消预约"), card);
+            cancelButton->setProperty("class", QStringLiteral("small"));
+            buttonRow->addWidget(startButton, 1);
+            buttonRow->addWidget(cancelButton, 1);
+            connect(startButton, &QPushButton::clicked, this, [this, order]() {
+                doAction(QStringLiteral("charge_start"), order.orderId, QStringLiteral("开始充电"), false);
+            });
+            connect(cancelButton, &QPushButton::clicked, this, [this, order]() {
+                doAction(QStringLiteral("charge_cancel"), order.orderId, QStringLiteral("取消预约"), true);
+            });
+        } else if (order.status == QLatin1String("charging")) {
+            cardLayout->addWidget(makeHint(card, QStringLiteral("开始时间：%1")
+                                                     .arg(formatDateTime(order.startTime))));
+            auto *tickLabel = new QLabel(tickText(order), card);
+            tickLabel->setObjectName(QStringLiteral("emphasis"));
+            m_tickLabels.insert(order.orderId, tickLabel);
+            cardLayout->addWidget(tickLabel);
+            cardLayout->addWidget(makeHint(card, QStringLiteral("预计花费为估算值，以实际结算为准")));
+            auto *stopButton = new QPushButton(QStringLiteral("停止充电"), card);
+            stopButton->setProperty("class", QStringLiteral("smallPrimary"));
+            buttonRow->addWidget(stopButton, 1);
+            connect(stopButton, &QPushButton::clicked, this, [this, order]() {
+                doAction(QStringLiteral("charge_stop"), order.orderId, QStringLiteral("停止充电"), true);
+            });
+        } else if (order.status == QLatin1String("pending_payment")) {
+            QString payment = QStringLiteral("电量 %1 kWh · 金额 ¥%2")
+                                  .arg(order.energyKwh, 0, 'f', 3)
+                                  .arg(order.amount, 0, 'f', 2);
+            cardLayout->addWidget(new QLabel(payment, card));
+            auto *settleButton = new QPushButton(QStringLiteral("结算"), card);
+            settleButton->setProperty("class", QStringLiteral("smallPrimary"));
+            buttonRow->addWidget(settleButton, 1);
+            connect(settleButton, &QPushButton::clicked, this, [this, order]() {
+                doAction(QStringLiteral("charge_settle"), order.orderId, QStringLiteral("结算"), false);
+            });
+        }
+        cardLayout->addLayout(buttonRow);
+        m_listLayout->addWidget(card);
+    }
+    m_listLayout->addStretch(1);
 }
 
-void ChargingPage::fetchBalance()
+void ChargingPage::updateTick()
 {
+    for (const Order &o : m_orders) {
+        if (o.status != QLatin1String("charging"))
+            continue;
+        QLabel *label = m_tickLabels.value(o.orderId, nullptr);
+        if (label)
+            label->setText(tickText(o));
+    }
+}
+
+void ChargingPage::updateBalanceLabel()
+{
+    bool hasPendingPayment = false;
+    for (const Order &o : m_orders) {
+        if (o.status == QLatin1String("pending_payment")) {
+            hasPendingPayment = true;
+            break;
+        }
+    }
+    if (!hasPendingPayment) {
+        m_balanceLabel->setVisible(false);
+        return;
+    }
     m_client->sendRequest(QStringLiteral("user_profile_get"), QJsonObject{},
                           [this](int code, const QString &, const QJsonObject &data) {
                               if (code != 0)
                                   return;
                               const UserInfo user = UserInfo::fromJson(
                                   data.value(QStringLiteral("user")).toObject());
-                              m_paymentBalance->setText(QStringLiteral("当前余额：¥%1")
-                                                            .arg(user.balance, 0, 'f', 2));
+                              m_balanceLabel->setText(QStringLiteral("当前余额：¥%1（余额不足请先到「我的」充值）")
+                                                          .arg(user.balance, 0, 'f', 2));
+                              m_balanceLabel->setVisible(true);
                           });
 }
 
 void ChargingPage::doAction(const QString &type, qint64 orderId, const QString &actionName, bool confirm)
 {
-    if (m_busy || !m_hasOrder)
+    if (m_busy)
         return;
     if (confirm) {
         const auto choice = QMessageBox::question(
@@ -264,32 +307,21 @@ void ChargingPage::doAction(const QString &type, qint64 orderId, const QString &
             return;
     }
     m_busy = true;
-    m_startButton->setEnabled(false);
-    m_cancelButton->setEnabled(false);
-    m_stopButton->setEnabled(false);
-    m_settleButton->setEnabled(false);
+    m_listContainer->setEnabled(false);
 
     m_client->sendRequest(type, QJsonObject{{QStringLiteral("orderId"), static_cast<double>(orderId)}},
-                          [this, actionName](int code, const QString &msg, const QJsonObject &data) {
+                          [this, type, actionName](int code, const QString &msg, const QJsonObject &data) {
                               m_busy = false;
-                              m_startButton->setEnabled(true);
-                              m_cancelButton->setEnabled(true);
-                              m_stopButton->setEnabled(true);
-                              m_settleButton->setEnabled(true);
+                              m_listContainer->setEnabled(true);
                               if (code == 0) {
-                                  if (data.contains(QStringLiteral("order"))) {
-                                      applyOrder(Order::fromJson(data.value(QStringLiteral("order")).toObject()));
-                                  } else {
-                                      refresh();
-                                  }
-                                  if (actionName == QLatin1String("结算")) {
+                                  // 操作后整表刷新（v2.2 多订单并行，状态以服务端为准）
+                                  refresh();
+                                  if (type == QLatin1String("charge_settle")) {
                                       const double balance = data.value(QStringLiteral("balance")).toDouble();
                                       QMessageBox::information(this, actionName,
                                                                QStringLiteral("结算完成，余额 ¥%1").arg(balance, 0, 'f', 2));
-                                      applyEmpty();
-                                  } else if (actionName == QLatin1String("取消预约")) {
+                                  } else if (type == QLatin1String("charge_cancel")) {
                                       QMessageBox::information(this, actionName, QStringLiteral("预约已取消"));
-                                      applyEmpty();
                                   }
                                   return;
                               }

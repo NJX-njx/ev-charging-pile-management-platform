@@ -1,5 +1,6 @@
 #include "findstationpage.h"
 
+#include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFrame>
@@ -23,6 +24,22 @@
 
 namespace {
 
+// 预设区域定位（说明书要求「下拉选择区域或手动输入地址进行定位（软件层面模拟GPS）」）：
+// 大连常用区域，坐标硬编码，选中即以该坐标查找附近站点
+struct PresetRegion {
+    const char *name;
+    double lng;
+    double lat;
+};
+
+constexpr PresetRegion kPresetRegions[] = {
+    {"沙河口区 · 星海广场", 121.594, 38.881},
+    {"中山区 · 青泥洼桥", 121.633, 38.917},
+    {"沙河口区 · 西安路", 121.599, 38.917},
+    {"甘井子区 · 大连北站", 121.588, 38.996},
+    {"高新园区 · 七贤岭", 121.517, 38.865},
+};
+
 class StationCard : public QFrame
 {
     Q_OBJECT
@@ -42,8 +59,14 @@ public:
         name->setObjectName(QStringLiteral("cardTitle"));
         topRow->addWidget(name, 1);
         if (station.distanceKm >= 0) {
-            auto *dist = new QLabel(QStringLiteral("%1 km").arg(station.distanceKm, 0, 'f', 1), this);
-            dist->setObjectName(QStringLiteral("emphasis"));
+            // 说明书：「点击距离信息」触发一键导航
+            auto *dist = new QPushButton(QStringLiteral("%1 km").arg(station.distanceKm, 0, 'f', 1), this);
+            dist->setProperty("class", QStringLiteral("link"));
+            dist->setCursor(Qt::PointingHandCursor);
+            dist->setToolTip(QStringLiteral("点击距离导航到该站点"));
+            connect(dist, &QPushButton::clicked, this, [this]() {
+                emit navigateClicked();
+            });
             topRow->addWidget(dist, 0);
         }
         auto *navButton = new QPushButton(QStringLiteral("导航"), this);
@@ -106,6 +129,17 @@ FindStationPage::FindStationPage(SocketClient *client, QWidget *parent)
     searchLayout->setContentsMargins(16, 12, 16, 12);
     searchLayout->setSpacing(8);
 
+    auto *regionRow = new QHBoxLayout();
+    auto *regionLabel = new QLabel(QStringLiteral("区域定位"), searchCard);
+    regionLabel->setObjectName(QStringLiteral("hint"));
+    m_regionCombo = new QComboBox(searchCard);
+    m_regionCombo->addItem(QStringLiteral("选择区域（模拟 GPS 定位）"));
+    for (const PresetRegion &r : kPresetRegions)
+        m_regionCombo->addItem(QString::fromUtf8(r.name), QPointF(r.lng, r.lat));
+    regionRow->addWidget(regionLabel, 0);
+    regionRow->addWidget(m_regionCombo, 1);
+    searchLayout->addLayout(regionRow);
+
     auto *addrRow = new QHBoxLayout();
     m_addressEdit = new QLineEdit(searchCard);
     m_addressEdit->setPlaceholderText(QStringLiteral("输入区域或地址，如：沙河口区星海广场"));
@@ -116,7 +150,7 @@ FindStationPage::FindStationPage(SocketClient *client, QWidget *parent)
     searchLayout->addLayout(addrRow);
 
     if (!MapBridge::isConfigured()) {
-        auto *mapHint = new QLabel(QStringLiteral("未配置腾讯地图 Key，地址解析不可用，请手动输入经纬度"), searchCard);
+        auto *mapHint = new QLabel(QStringLiteral("未配置腾讯地图 Key，地址解析不可用；可用区域下拉或手动经纬度定位"), searchCard);
         mapHint->setObjectName(QStringLiteral("hint"));
         mapHint->setWordWrap(true);
         searchLayout->addWidget(mapHint);
@@ -159,9 +193,23 @@ FindStationPage::FindStationPage(SocketClient *client, QWidget *parent)
     scroll->setWidget(m_listContainer);
     root->addWidget(scroll, 1);
 
+    connect(m_regionCombo, QOverload<int>::of(&QComboBox::activated),
+            this, &FindStationPage::onRegionSelected);
     connect(m_geocodeButton, &QPushButton::clicked, this, &FindStationPage::onGeocodeClicked);
     connect(m_searchButton, &QPushButton::clicked, this, &FindStationPage::onSearchClicked);
     connect(m_refreshButton, &QPushButton::clicked, this, &FindStationPage::onRefreshClicked);
+}
+
+void FindStationPage::onRegionSelected(int index)
+{
+    const QVariant data = m_regionCombo->itemData(index);
+    if (!data.isValid())
+        return;
+    const QPointF coord = data.toPointF();
+    m_lngEdit->setText(QString::number(coord.x(), 'f', 6));
+    m_latEdit->setText(QString::number(coord.y(), 'f', 6));
+    m_lastLocationDesc = m_regionCombo->itemText(index);
+    searchNearby(coord.x(), coord.y());
 }
 
 void FindStationPage::onGeocodeClicked()
@@ -179,7 +227,7 @@ void FindStationPage::onGeocodeClicked()
     if (!m_map)
         m_map = new MapBridge(this);
     setBusy(true);
-    m_map->geocode(address, [this](bool ok, double lng, double lat, const QString &error) {
+    m_map->geocode(address, [this, address](bool ok, double lng, double lat, const QString &error) {
         setBusy(false);
         if (!ok) {
             QMessageBox::warning(this, QStringLiteral("解析地址"), error);
@@ -187,6 +235,7 @@ void FindStationPage::onGeocodeClicked()
         }
         m_lngEdit->setText(QString::number(lng, 'f', 6));
         m_latEdit->setText(QString::number(lat, 'f', 6));
+        m_lastLocationDesc = address;
         searchNearby(lng, lat);
     });
 }
@@ -202,6 +251,7 @@ void FindStationPage::onSearchClicked()
                              QStringLiteral("请输入正确的经纬度（经度 -180~180，纬度 -90~90）"));
         return;
     }
+    m_lastLocationDesc = QStringLiteral("手动输入坐标");
     searchNearby(lng, lat);
 }
 
@@ -426,18 +476,18 @@ void FindStationPage::reservePile(qint64 pileId, const QString &pileCode, QDialo
 
 void FindStationPage::onNavigateToStation(const Station &station)
 {
-    if (!NavigationDialog::isAvailable() || !MapBridge::isConfigured()) {
+    if (!NavigationDialog::isAvailable()) {
         QMessageBox::information(this, QStringLiteral("导航"),
                                  QStringLiteral("当前构建未包含地图组件或未配置腾讯地图 Key，无法导航"));
         return;
     }
     if (!m_hasLastCoord) {
         QMessageBox::information(this, QStringLiteral("导航"),
-                                 QStringLiteral("请先解析地址或输入经纬度，作为导航起点"));
+                                 QStringLiteral("请先选择区域、解析地址或输入经纬度，作为导航起点"));
         return;
     }
-    // 非模态 + WA_DeleteOnClose；WebEngine 部件在对话框内懒创建
-    auto *dialog = new NavigationDialog(station.name, m_lastLng, m_lastLat,
+    // 非模态 + WA_DeleteOnClose；QWebEngineView 在点击「导航」按钮时才创建并加载路线
+    auto *dialog = new NavigationDialog(station.name, m_lastLng, m_lastLat, m_lastLocationDesc,
                                         station.lng, station.lat, this);
     dialog->show();
 }

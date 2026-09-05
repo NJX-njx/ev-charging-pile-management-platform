@@ -1,16 +1,22 @@
-# 登录流程卡死回归 harness（offscreen）：链接真实 client 源码，脚本化点击按钮。
+# 协议 v2.2 适配验证 harness（offscreen）：链接真实 client 源码 + 状态化假服务端，
+# 脚本化驱动 UI 断言多订单/预计花费/资料编辑/导航 URL/区域下拉行为。
 # 不属于交付模块，仅用于开发验证；用法见 run_scenarios.sh。
-QT += core gui widgets network
+QT += core gui widgets network testlib
 
 CONFIG += c++17 console
 CONFIG -= app_bundle
 
-TARGET = loginfreeze_harness
+TARGET = v22_harness
 TEMPLATE = app
 
 INCLUDEPATH += ../../src
 
 SRC = ../..
+
+qtHaveModule(webenginewidgets) {
+    QT += webenginewidgets
+    DEFINES += EVCP_HAVE_WEBENGINE
+}
 
 SOURCES += \
     main.cpp \

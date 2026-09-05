@@ -63,6 +63,7 @@ Order Order::fromJson(const QJsonObject &o)
     r.stationName = o.value(QStringLiteral("stationName")).toString();
     r.pileId = static_cast<qint64>(o.value(QStringLiteral("pileId")).toDouble());
     r.pileCode = o.value(QStringLiteral("pileCode")).toString();
+    r.powerKw = o.value(QStringLiteral("powerKw")).toDouble();
     r.status = o.value(QStringLiteral("status")).toString();
     r.reservedAt = o.value(QStringLiteral("reservedAt")).toString();
     r.startTime = o.value(QStringLiteral("startTime")).toString();

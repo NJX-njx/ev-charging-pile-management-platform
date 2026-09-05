@@ -1,15 +1,20 @@
 #pragma once
 
+#include <QHash>
+#include <QList>
 #include <QWidget>
 
 #include "model/models.h"
 
 class QLabel;
-class QPushButton;
-class QStackedWidget;
 class QTimer;
+class QVBoxLayout;
 class SocketClient;
 
+// 充电页（协议 v2.2）：active_order_get 返回未完成订单数组，每单一卡并行展示；
+// 卡片按状态给出操作（reserved→开始/取消，charging→停止，pending_payment→结算）；
+// charging 卡片每秒刷新「已充时长｜预计花费」（powerKw × 已充小时 × unitPrice，
+// 仅为估算展示，以实际结算为准）。进入页面、定时（15s）与每次操作后刷新整表。
 class ChargingPage : public QWidget
 {
     Q_OBJECT
@@ -24,31 +29,22 @@ signals:
 
 protected:
     void showEvent(QShowEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
 
 private:
-    void applyOrder(const Order &order);
-    void applyEmpty();
-    void updateElapsed();
+    void applyOrders(const QList<Order> &orders);
+    void buildCards();
+    void updateTick();
+    void updateBalanceLabel();
     void doAction(const QString &type, qint64 orderId, const QString &actionName, bool confirm);
-    void fetchBalance();
 
     SocketClient *m_client;
-    QStackedWidget *m_stack;
-    QTimer *m_elapsedTimer;
-    Order m_order;
-    bool m_hasOrder = false;
+    QWidget *m_listContainer;
+    QVBoxLayout *m_listLayout;
+    QLabel *m_balanceLabel;
+    QTimer *m_tickTimer;
+    QTimer *m_refreshTimer;
+    QList<Order> m_orders;
+    QHash<qint64, QLabel *> m_tickLabels; // charging 订单 orderId → 「时长｜花费」行
     bool m_busy = false;
-
-    QLabel *m_reservedInfo;
-    QPushButton *m_startButton;
-    QPushButton *m_cancelButton;
-
-    QLabel *m_chargingInfo;
-    QLabel *m_elapsedLabel;
-    QPushButton *m_stopButton;
-
-    QLabel *m_paymentInfo;
-    QLabel *m_paymentBalance;
-    QPushButton *m_settleButton;
-    QPushButton *m_paymentRefreshButton;
 };

@@ -53,6 +53,8 @@ struct Order {
     QString stationName;
     qint64 pileId = 0;
     QString pileCode;
+    // v2.2：关联电桩当前功率，用于估算充电中预计花费；服务端缺省时为 0
+    double powerKw = 0.0;
     QString status;
     QString reservedAt;
     QString startTime;
