@@ -13,6 +13,7 @@
 #include <QRegularExpression>
 #include <QStatusBar>
 
+#include "adminmanagedialog.h"
 #include "net/socketclient.h"
 #include "orderpage.h"
 #include "pilemanagepage.h"
@@ -63,6 +64,14 @@ MainWindow::MainWindow(SocketClient *client, const QString &username, const QStr
     QMenu *accountMenu = menuBar()->addMenu(QStringLiteral("账号"));
     QAction *changePwdAction = accountMenu->addAction(QStringLiteral("修改密码"));
     connect(changePwdAction, &QAction::triggered, this, &MainWindow::onChangePassword);
+    QAction *manageAdminsAction = accountMenu->addAction(QStringLiteral("管理员账号管理"));
+    connect(manageAdminsAction, &QAction::triggered, this, &MainWindow::onManageAdmins);
+
+    // 顶部栏右侧放明确的「修改密码」按钮，入口不再藏在菜单里
+    QPushButton *changePwdBtn = new QPushButton(QStringLiteral("修改密码"));
+    changePwdBtn->setObjectName(QStringLiteral("btnChangePwd"));
+    menuBar()->setCornerWidget(changePwdBtn);
+    connect(changePwdBtn, &QPushButton::clicked, this, &MainWindow::onChangePassword);
 
     m_connLabel = new QLabel;
     statusBar()->addPermanentWidget(m_connLabel);
@@ -111,6 +120,12 @@ void MainWindow::refreshCurrentPage()
     case 4: static_cast<UserPage *>(ui->stackedWidget->widget(4))->refresh(); break;
     case 5: static_cast<OrderPage *>(ui->stackedWidget->widget(5))->refresh(); break;
     }
+}
+
+void MainWindow::onManageAdmins()
+{
+    AdminManageDialog dialog(m_client, m_username, this);
+    dialog.exec();
 }
 
 void MainWindow::onChangePassword()

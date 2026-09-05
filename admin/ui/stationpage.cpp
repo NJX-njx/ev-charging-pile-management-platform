@@ -1,5 +1,6 @@
 #include "stationpage.h"
 
+#include <QCheckBox>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
@@ -36,6 +37,9 @@ StationPage::StationPage(SocketClient *client, QWidget *parent)
     QPushButton *searchBtn = new QPushButton(QStringLiteral("查询"));
     searchBtn->setProperty("primary", true);
     controls->addWidget(searchBtn);
+    m_showDeletedCheck = new QCheckBox(QStringLiteral("显示已删除"));
+    m_showDeletedCheck->setObjectName(QStringLiteral("checkShowDeleted"));
+    controls->addWidget(m_showDeletedCheck);
     controls->addStretch();
     QPushButton *pilesBtn = new QPushButton(QStringLiteral("查看站内电桩"));
     controls->addWidget(pilesBtn);
@@ -47,16 +51,17 @@ StationPage::StationPage(SocketClient *client, QWidget *parent)
     root->addLayout(controls);
 
     m_table = new QTableWidget;
-    m_table->setColumnCount(9);
+    m_table->setColumnCount(10);
     m_table->setHorizontalHeaderLabels({
         QStringLiteral("ID"), QStringLiteral("站名"), QStringLiteral("地址"),
         QStringLiteral("经度"), QStringLiteral("纬度"), QStringLiteral("单价(元/度)"),
-        QStringLiteral("总桩数"), QStringLiteral("在线率"), QStringLiteral("操作"),
+        QStringLiteral("总桩数"), QStringLiteral("在线率"), QStringLiteral("状态"),
+        QStringLiteral("操作"),
     });
     m_table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     // 操作列固定宽度，避免 Stretch 均分时「修改」「删除」按钮文字被截断
-    m_table->horizontalHeader()->setSectionResizeMode(8, QHeaderView::Fixed);
-    m_table->setColumnWidth(8, 170);
+    m_table->horizontalHeader()->setSectionResizeMode(9, QHeaderView::Fixed);
+    m_table->setColumnWidth(9, 170);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -79,6 +84,10 @@ StationPage::StationPage(SocketClient *client, QWidget *parent)
     root->addLayout(pager);
 
     connect(refreshBtn, &QPushButton::clicked, this, &StationPage::refresh);
+    connect(m_showDeletedCheck, &QCheckBox::toggled, this, [this]() {
+        m_page = 1;
+        loadStations();
+    });
     connect(m_addBtn, &QPushButton::clicked, this, &StationPage::onAddStation);
     connect(pilesBtn, &QPushButton::clicked, this, &StationPage::onShowPiles);
     connect(searchBtn, &QPushButton::clicked, this, [this]() {
@@ -134,6 +143,8 @@ void StationPage::loadStations()
     const QString keyword = m_searchEdit->text().trimmed();
     if (!keyword.isEmpty())
         payload[QStringLiteral("nameKeyword")] = keyword;
+    if (m_showDeletedCheck->isChecked())
+        payload[QStringLiteral("includeDeleted")] = true;
 
     m_client->sendRequest(QStringLiteral("station_list"), payload,
                           [this](int code, const QString &, const QJsonObject &data) {
@@ -151,9 +162,11 @@ void StationPage::loadStations()
                               m_table->setRowCount(stations.size());
                               for (int row = 0; row < stations.size(); ++row) {
                                   const QJsonObject s = stations.at(row).toObject();
+                                  const bool deleted = s[QStringLiteral("deleted")].toBool();
 
                                   QTableWidgetItem *idItem = new QTableWidgetItem(QString::number(s[QStringLiteral("stationId")].toInt()));
                                   idItem->setData(Qt::UserRole, s[QStringLiteral("stationId")].toInt());
+                                  idItem->setData(Qt::UserRole + 1, deleted);
                                   m_table->setItem(row, 0, idItem);
                                   m_table->setItem(row, 1, new QTableWidgetItem(s[QStringLiteral("name")].toString()));
                                   m_table->setItem(row, 2, new QTableWidgetItem(s[QStringLiteral("address")].toString()));
@@ -163,6 +176,10 @@ void StationPage::loadStations()
                                   m_table->setItem(row, 6, new QTableWidgetItem(QString::number(s[QStringLiteral("pileTotal")].toInt())));
                                   m_table->setItem(row, 7, new QTableWidgetItem(QStringLiteral("%1%").arg(s[QStringLiteral("onlineRate")].toDouble() * 100, 0, 'f', 0)));
 
+                                  QTableWidgetItem *statusItem = new QTableWidgetItem(UiEnums::recordStatusText(deleted));
+                                  statusItem->setForeground(UiEnums::recordStatusColor(deleted));
+                                  m_table->setItem(row, 8, statusItem);
+
                                   QWidget *ops = new QWidget;
                                   ops->setObjectName(QStringLiteral("stationRowOps"));
                                   QHBoxLayout *opsLayout = new QHBoxLayout(ops);
@@ -170,9 +187,16 @@ void StationPage::loadStations()
                                   opsLayout->setSpacing(6);
                                   QPushButton *editBtn = new QPushButton(QStringLiteral("修改"));
                                   QPushButton *delBtn = new QPushButton(QStringLiteral("删除"));
+                                  // 已删除记录仅用于历史查看，不作为修改/删除的操作对象
+                                  if (deleted) {
+                                      editBtn->setEnabled(false);
+                                      delBtn->setEnabled(false);
+                                      editBtn->setToolTip(QStringLiteral("已删除记录不可操作"));
+                                      delBtn->setToolTip(QStringLiteral("已删除记录不可操作"));
+                                  }
                                   opsLayout->addWidget(editBtn);
                                   opsLayout->addWidget(delBtn);
-                                  m_table->setCellWidget(row, 8, ops);
+                                  m_table->setCellWidget(row, 9, ops);
                                   connect(editBtn, &QPushButton::clicked, this,
                                           [this, s, editBtn]() { onEditStation(s, editBtn); });
                                   connect(delBtn, &QPushButton::clicked, this,
@@ -300,9 +324,15 @@ void StationPage::onDeleteStation(const QJsonObject &station, QPushButton *butto
 
 void StationPage::onShowPiles()
 {
+    const auto items = m_table->selectedItems();
     const int stationId = selectedStationId();
     if (stationId < 0) {
         QMessageBox::information(this, QStringLiteral("站内电桩"), QStringLiteral("请先选择一个充电站"));
+        return;
+    }
+    // 已删除站点仅用于历史查看，station_detail 对其按不存在处理（协议 3.4）
+    if (!items.isEmpty() && m_table->item(items.first()->row(), 0)->data(Qt::UserRole + 1).toBool()) {
+        QMessageBox::information(this, QStringLiteral("站内电桩"), QStringLiteral("已删除站点仅用于历史数据查看"));
         return;
     }
 

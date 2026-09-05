@@ -1,5 +1,6 @@
 #include "userpage.h"
 
+#include <QCheckBox>
 #include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -52,6 +53,9 @@ UserPage::UserPage(SocketClient *client, QWidget *parent)
     QPushButton *searchBtn = new QPushButton(QStringLiteral("查询"));
     searchBtn->setProperty("primary", true);
     controls->addWidget(searchBtn);
+    m_showDeletedCheck = new QCheckBox(QStringLiteral("显示已删除"));
+    m_showDeletedCheck->setObjectName(QStringLiteral("checkShowDeleted"));
+    controls->addWidget(m_showDeletedCheck);
     controls->addStretch();
     QPushButton *refreshBtn = new QPushButton(QStringLiteral("刷新"));
     controls->addWidget(refreshBtn);
@@ -98,6 +102,9 @@ UserPage::UserPage(SocketClient *client, QWidget *parent)
         loadUsers(m_searchEdit->text().trimmed());
     });
     connect(refreshBtn, &QPushButton::clicked, this, &UserPage::refresh);
+    connect(m_showDeletedCheck, &QCheckBox::toggled, this, [this]() {
+        loadUsers(m_searchEdit->text().trimmed());
+    });
     connect(m_addBtn, &QPushButton::clicked, this, &UserPage::onAddUser);
     connect(m_editBtn, &QPushButton::clicked, this, &UserPage::onEditUser);
     connect(m_resetPwdBtn, &QPushButton::clicked, this, &UserPage::onResetPassword);
@@ -114,11 +121,20 @@ UserPage::UserPage(SocketClient *client, QWidget *parent)
 
 void UserPage::updateActionButtons()
 {
-    const bool hasSelection = !m_table->selectedItems().isEmpty();
-    m_editBtn->setEnabled(hasSelection);
-    m_resetPwdBtn->setEnabled(hasSelection);
-    m_deleteBtn->setEnabled(hasSelection);
-    m_toggleBtn->setEnabled(hasSelection);
+    const auto items = m_table->selectedItems();
+    const bool hasSelection = !items.isEmpty();
+    const bool deleted = hasSelection
+                         && m_table->item(items.first()->row(), 0)->data(Qt::UserRole + 1).toBool();
+    // 已删除记录仅用于历史查看，不作为修改/删除/冻结等操作对象
+    m_editBtn->setEnabled(hasSelection && !deleted);
+    m_resetPwdBtn->setEnabled(hasSelection && !deleted);
+    m_deleteBtn->setEnabled(hasSelection && !deleted);
+    m_toggleBtn->setEnabled(hasSelection && !deleted);
+    const QString tip = deleted ? QStringLiteral("已删除记录不可操作") : QString();
+    m_editBtn->setToolTip(tip);
+    m_resetPwdBtn->setToolTip(tip);
+    m_deleteBtn->setToolTip(tip);
+    m_toggleBtn->setToolTip(tip);
 }
 
 int UserPage::selectedRow() const
@@ -136,7 +152,10 @@ void UserPage::refresh()
 
 void UserPage::loadUsers(const QString &phoneKeyword)
 {
-    m_client->sendRequest(QStringLiteral("user_list"), QJsonObject{{QStringLiteral("phoneKeyword"), phoneKeyword}},
+    QJsonObject payload{{QStringLiteral("phoneKeyword"), phoneKeyword}};
+    if (m_showDeletedCheck->isChecked())
+        payload[QStringLiteral("includeDeleted")] = true;
+    m_client->sendRequest(QStringLiteral("user_list"), payload,
                           [this](int code, const QString &, const QJsonObject &data) {
                               if (code != 0)
                                   return;
@@ -147,9 +166,11 @@ void UserPage::loadUsers(const QString &phoneKeyword)
                               m_table->setRowCount(users.size());
                               for (int row = 0; row < users.size(); ++row) {
                                   const QJsonObject u = users.at(row).toObject();
+                                  const bool deleted = u[QStringLiteral("deleted")].toBool();
 
                                   QTableWidgetItem *idItem = new QTableWidgetItem(QString::number(u[QStringLiteral("userId")].toInt()));
                                   idItem->setData(Qt::UserRole, u[QStringLiteral("userId")].toInt());
+                                  idItem->setData(Qt::UserRole + 1, deleted);
                                   m_table->setItem(row, 0, idItem);
                                   m_table->setItem(row, 1, new QTableWidgetItem(u[QStringLiteral("phone")].toString()));
                                   m_table->setItem(row, 2, new QTableWidgetItem(u[QStringLiteral("nickname")].toString()));
@@ -161,8 +182,11 @@ void UserPage::loadUsers(const QString &phoneKeyword)
                                                                                     : u[QStringLiteral("regTime")].toString()));
 
                                   const QString status = u[QStringLiteral("status")].toString();
-                                  QTableWidgetItem *statusItem = new QTableWidgetItem(UiEnums::userStatusText(status));
-                                  statusItem->setForeground(UiEnums::userStatusColor(status));
+                                  // 已删除用户状态列固定显示「已删除」（色板文本-次色），原始状态保留在 UserRole
+                                  QTableWidgetItem *statusItem = new QTableWidgetItem(
+                                      deleted ? UiEnums::recordStatusText(true) : UiEnums::userStatusText(status));
+                                  statusItem->setForeground(deleted ? UiEnums::recordStatusColor(true)
+                                                                    : UiEnums::userStatusColor(status));
                                   statusItem->setData(Qt::UserRole, status);
                                   m_table->setItem(row, 5, statusItem);
                               }

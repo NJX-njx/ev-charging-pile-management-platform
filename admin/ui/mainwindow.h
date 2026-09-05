@@ -20,6 +20,7 @@ public:
 
 private slots:
     void onChangePassword();
+    void onManageAdmins();
 
 private:
     void refreshCurrentPage();
