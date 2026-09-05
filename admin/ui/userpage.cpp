@@ -103,13 +103,22 @@ UserPage::UserPage(SocketClient *client, QWidget *parent)
     connect(m_resetPwdBtn, &QPushButton::clicked, this, &UserPage::onResetPassword);
     connect(m_deleteBtn, &QPushButton::clicked, this, &UserPage::onDeleteUser);
     connect(m_toggleBtn, &QPushButton::clicked, this, &UserPage::onToggleStatus);
-    connect(m_table, &QTableWidget::itemSelectionChanged, this, [this]() {
-        const bool hasSelection = !m_table->selectedItems().isEmpty();
-        m_editBtn->setEnabled(hasSelection);
-        m_resetPwdBtn->setEnabled(hasSelection);
-        m_deleteBtn->setEnabled(hasSelection);
-        m_toggleBtn->setEnabled(hasSelection);
+    connect(m_table, &QTableWidget::itemSelectionChanged, this, &UserPage::updateActionButtons);
+    // 兜底：点击当前行不产生选中变化信号时，也要保证该行被选中且按钮状态同步
+    connect(m_table, &QTableWidget::clicked, this, [this](const QModelIndex &index) {
+        if (index.isValid())
+            m_table->selectRow(index.row());
+        updateActionButtons();
     });
+}
+
+void UserPage::updateActionButtons()
+{
+    const bool hasSelection = !m_table->selectedItems().isEmpty();
+    m_editBtn->setEnabled(hasSelection);
+    m_resetPwdBtn->setEnabled(hasSelection);
+    m_deleteBtn->setEnabled(hasSelection);
+    m_toggleBtn->setEnabled(hasSelection);
 }
 
 int UserPage::selectedRow() const
@@ -131,6 +140,9 @@ void UserPage::loadUsers(const QString &phoneKeyword)
                           [this](int code, const QString &, const QJsonObject &data) {
                               if (code != 0)
                                   return;
+                              const int previousUserId = selectedRow() >= 0
+                                                             ? m_table->item(selectedRow(), 0)->data(Qt::UserRole).toInt()
+                                                             : -1;
                               const QJsonArray users = data[QStringLiteral("users")].toArray();
                               m_table->setRowCount(users.size());
                               for (int row = 0; row < users.size(); ++row) {
@@ -154,10 +166,20 @@ void UserPage::loadUsers(const QString &phoneKeyword)
                                   statusItem->setData(Qt::UserRole, status);
                                   m_table->setItem(row, 5, statusItem);
                               }
-                              m_editBtn->setEnabled(false);
-                              m_resetPwdBtn->setEnabled(false);
-                              m_deleteBtn->setEnabled(false);
-                              m_toggleBtn->setEnabled(false);
+                              // 重载后恢复选中：优先按 userId 找回原行，否则选中第一行，
+                              // 保证始终存在真实选中行而非仅有当前行高亮
+                              int targetRow = -1;
+                              for (int row = 0; row < m_table->rowCount(); ++row) {
+                                  if (m_table->item(row, 0)->data(Qt::UserRole).toInt() == previousUserId) {
+                                      targetRow = row;
+                                      break;
+                                  }
+                              }
+                              if (targetRow < 0 && m_table->rowCount() > 0)
+                                  targetRow = 0;
+                              if (targetRow >= 0)
+                                  m_table->selectRow(targetRow);
+                              updateActionButtons();
                           });
 }
 
@@ -274,7 +296,7 @@ void UserPage::onEditUser()
     m_editBtn->setEnabled(false);
     m_client->sendRequest(QStringLiteral("user_update"), payload,
                           [this](int code, const QString &msg, const QJsonObject &) {
-                              m_editBtn->setEnabled(true);
+                              updateActionButtons();
                               if (code == 0) {
                                   QMessageBox::information(this, QStringLiteral("修改用户"), QStringLiteral("保存成功"));
                                   refresh();
@@ -300,7 +322,7 @@ void UserPage::onResetPassword()
     m_resetPwdBtn->setEnabled(false);
     m_client->sendRequest(QStringLiteral("user_reset_password"), QJsonObject{{QStringLiteral("userId"), userId}},
                           [this](int code, const QString &msg, const QJsonObject &data) {
-                              m_resetPwdBtn->setEnabled(true);
+                              updateActionButtons();
                               if (code == 0) {
                                   QMessageBox::information(this, QStringLiteral("重置密码"),
                                                            QStringLiteral("密码已重置为初始密码：%1\n请将初始密码告知用户。")
@@ -327,7 +349,7 @@ void UserPage::onDeleteUser()
     m_deleteBtn->setEnabled(false);
     m_client->sendRequest(QStringLiteral("user_delete"), QJsonObject{{QStringLiteral("userId"), userId}},
                           [this](int code, const QString &msg, const QJsonObject &) {
-                              m_deleteBtn->setEnabled(true);
+                              updateActionButtons();
                               if (code == 0) {
                                   QMessageBox::information(this, QStringLiteral("删除用户"), QStringLiteral("删除成功"));
                                   refresh();

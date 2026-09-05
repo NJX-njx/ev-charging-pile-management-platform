@@ -26,6 +26,7 @@ private slots:
 private:
     void loadUsers(const QString &phoneKeyword);
     int selectedRow() const;
+    void updateActionButtons();
 
     SocketClient *m_client;
     QLineEdit *m_searchEdit;
