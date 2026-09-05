@@ -36,7 +36,8 @@ const QColor kPrimary(0x00, 0xA8, 0x70);
 const QColor kFunnelIdle(0x9C, 0xA3, 0xAF);
 const QColor kFunnelGlyph(0x6B, 0x72, 0x80);
 
-// 装入顺序标记（「不排序」状态据此还原），页面只用 UserRole/UserRole+1，避开
+// 装入顺序标记（「不排序」状态据此还原），页面只用 UserRole/UserRole+1/+2
+// 与 kSortKeyRole（filtertable.h），避开
 const int kOrderRole = Qt::UserRole + 100;
 
 // 数值感知比较：支持可选「%」后缀（如在线率），其余按本地化文本比较
@@ -58,6 +59,17 @@ bool valueLess(const QString &sa, const QString &sb)
 
 bool itemLess(const QTableWidgetItem *a, const QTableWidgetItem *b)
 {
+    // 可选排序键优先：两个 item 都设置了 kSortKeyRole 时按键比较（数值优先，退回文本）
+    const QVariant ka = a ? a->data(kSortKeyRole) : QVariant();
+    const QVariant kb = b ? b->data(kSortKeyRole) : QVariant();
+    if (ka.isValid() && kb.isValid()) {
+        bool numA = false, numB = false;
+        const double da = ka.toDouble(&numA);
+        const double db = kb.toDouble(&numB);
+        if (numA && numB)
+            return da < db;
+        return QString::localeAwareCompare(ka.toString(), kb.toString()) < 0;
+    }
     return valueLess(a ? a->text() : QString(), b ? b->text() : QString());
 }
 

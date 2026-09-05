@@ -37,6 +37,27 @@ QFrame#card {
     border-radius: 8px;
 }
 
+/* 电桩状态总览徽标（站点与电桩页顶部状态条），文字颜色按 status 属性取色板语义色 */
+QLabel#pileStatusBadge {
+    background: #FFFFFF;
+    border: 1px solid #E0E3E6;
+    border-radius: 10px;
+    padding: 2px 10px;
+    font-weight: bold;
+}
+QLabel#pileStatusBadge[status="idle"] {
+    color: #2E7D32;
+}
+QLabel#pileStatusBadge[status="in_use"] {
+    color: #1565C0;
+}
+QLabel#pileStatusBadge[status="fault"] {
+    color: #C62828;
+}
+QLabel#pileStatusBadge[status="total"] {
+    color: #1F2329;
+}
+
 /* 次按钮（默认） */
 QPushButton {
     background: #FFFFFF;

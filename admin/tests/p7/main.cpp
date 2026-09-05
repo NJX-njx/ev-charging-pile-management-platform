@@ -3,15 +3,19 @@
 //
 // 退出码：0=PASS，2=FAIL，3=harness 自身错误。
 // 场景（--scenario）：
-//   nav         导航 6 项在最小尺寸 1280×800 下完整可见、默认 1440×900、基准字体 11pt
-//   merged      站点与电桩合并页：选中站点联动电桩列表、按电桩状态的按钮使能
+//   nav         导航 5 项在最小尺寸 1280×800 下完整可见、默认 1440×900、基准字体 11pt、
+//               站点表（站名/地址）与订单表（站点）弹性列宽 ≥110px
+//   merged      站点与电桩合并页：状态总览条、选中站点联动电桩列表、全部站点模式
+//              （所属站列显隐）、按电桩状态的按钮使能
 //   stationops  站点全部操作：搜索/新增/修改/导入/删除/显示已删除/已删除站点联动
 //   pileops     电桩全部操作：新增/修改/禁用/重启/删除/占用详情/显示已删除
-//   filtersort  Excel 式筛选排序：升降/不排序、筛选/清除、叠加、跨页面（站点/用户/订单/管理员）
+//   filtersort  Excel 式筛选排序：升降/不排序、筛选/清除、叠加、跨页面（站点/用户/订单/管理员）、
+//               订单结算时间列紧凑格式（MM-dd HH:mm，不含秒）
 
 #include <QApplication>
 #include <QAbstractSpinBox>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QCommandLineParser>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -26,6 +30,7 @@
 #include <QMessageBox>
 #include <QProgressDialog>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QStackedWidget>
 #include <QTableWidget>
 #include <QTest>
@@ -285,9 +290,32 @@ static void scenarioNav()
     CHECK(nav != nullptr && stack != nullptr);
     if (!nav || !stack)
         return;
-    CHECK(nav->count() == 6);
-    CHECK(stack->count() == 6);
-    CHECK(nav->item(2)->text() == QStringLiteral("站点与电桩"));
+    CHECK(nav->count() == 5);
+    CHECK(stack->count() == 5);
+    CHECK(nav->item(1)->text() == QStringLiteral("站点与电桩"));
+
+    // 默认 1440×900 下的弹性列宽：站点表站名/地址列、订单表站点列 ≥110px（此前截断的典型阈值）
+    nav->setCurrentRow(1); // 站点与电桩
+    QTest::qWait(200);
+    QTableWidget *stationTable = win.findChild<QTableWidget *>(QStringLiteral("stationTable"));
+    CHECK(stationTable != nullptr);
+    if (stationTable) {
+        CHECK(stationTable->columnCount() == 7);
+        CHECK(stationTable->columnWidth(1) >= 110);
+        CHECK(stationTable->columnWidth(2) >= 110);
+        log(QStringLiteral("站点表 站名列 %1px / 地址列 %2px（≥110）")
+                .arg(stationTable->columnWidth(1))
+                .arg(stationTable->columnWidth(2)));
+    }
+    nav->setCurrentRow(3); // 订单管理
+    QTest::qWait(200);
+    QTableWidget *orderTable = win.findChild<QTableWidget *>(QStringLiteral("orderTable"));
+    CHECK(orderTable != nullptr);
+    if (orderTable) {
+        CHECK(orderTable->columnWidth(2) >= 110);
+        log(QStringLiteral("订单表 站点列 %1px（≥110）").arg(orderTable->columnWidth(2)));
+    }
+    nav->setCurrentRow(0);
 
     // 最小窗口尺寸下全部导航项完整可见
     win.resize(1280, 800);
@@ -311,40 +339,87 @@ static void scenarioMerged(const QString &host, quint16 port)
     CHECK(waitFor([&win] { return win.isVisible(); }));
     QListWidget *nav = win.findChild<QListWidget *>(QStringLiteral("listWidgetNav"));
     CHECK(nav != nullptr);
-    nav->setCurrentRow(2);
+    nav->setCurrentRow(1);
 
     QTableWidget *stationTable = win.findChild<QTableWidget *>(QStringLiteral("stationTable"));
     QTableWidget *pileTable = win.findChild<QTableWidget *>(QStringLiteral("pileTable"));
     QLabel *stationLabel = win.findChild<QLabel *>(QStringLiteral("labelCurrentStation"));
+    QComboBox *scopeCombo = win.findChild<QComboBox *>(QStringLiteral("comboStationScope"));
     QPushButton *disableBtn = win.findChild<QPushButton *>(QStringLiteral("btnDisablePile"));
     QPushButton *activeOrderBtn = win.findChild<QPushButton *>(QStringLiteral("btnActiveOrder"));
     QPushButton *addPileBtn = findButton(&win, QStringLiteral("新增电桩"));
     QPushButton *editPileBtn = findButton(&win, QStringLiteral("修改电桩"));
     QPushButton *deletePileBtn = findButton(&win, QStringLiteral("删除电桩"));
     QPushButton *restartBtn = findButton(&win, QStringLiteral("远程重启"));
-    CHECK(stationTable && pileTable && stationLabel && disableBtn && activeOrderBtn
+    CHECK(stationTable && pileTable && stationLabel && scopeCombo && disableBtn && activeOrderBtn
           && addPileBtn && editPileBtn && deletePileBtn && restartBtn);
-    if (!stationTable || !pileTable)
+    if (!stationTable || !pileTable || !scopeCombo)
         return;
 
-    // 初始：2 个站点，自动选中第一站 → 右侧显示其 3 个电桩
+    // 顶部状态总览条：全站电桩状态徽标（mock 种子：空闲3/在用1/故障1/总计5）
+    auto badgeText = [&win](const QString &status) -> QLabel * {
+        const auto badges = win.findChildren<QLabel *>(QStringLiteral("pileStatusBadge"));
+        for (QLabel *b : badges)
+            if (b->property("status").toString() == status)
+                return b;
+        return nullptr;
+    };
+    QLabel *badgeIdle = badgeText(QStringLiteral("idle"));
+    QLabel *badgeInUse = badgeText(QStringLiteral("in_use"));
+    QLabel *badgeFault = badgeText(QStringLiteral("fault"));
+    QLabel *badgeTotal = badgeText(QStringLiteral("total"));
+    CHECK(badgeIdle && badgeInUse && badgeFault && badgeTotal);
+    if (badgeIdle && badgeInUse && badgeFault && badgeTotal) {
+        CHECK(waitFor([&] { return badgeTotal->text() == QStringLiteral("总计 5"); }));
+        CHECK(badgeIdle->text() == QStringLiteral("空闲 3（60.0%）"));
+        CHECK(badgeInUse->text() == QStringLiteral("在用 1"));
+        CHECK(badgeFault->text() == QStringLiteral("故障 1"));
+        log(QStringLiteral("状态总览条：%1 / %2 / %3 / %4")
+                .arg(badgeIdle->text(), badgeInUse->text(), badgeFault->text(), badgeTotal->text()));
+    }
+
+    // 初始：2 个站点，自动选中第一站 → 右侧显示其 3 个电桩（单站模式，所属站列隐藏）
     CHECK(waitFor([&] { return stationTable->rowCount() == 2; }));
     CHECK(waitFor([&] { return pileTable->rowCount() == 3; }));
     CHECK(columnTexts(pileTable, 0, false)
           == (QStringList{QStringLiteral("P-0101"), QStringLiteral("P-0102"), QStringLiteral("P-0103")}));
-    CHECK(stationLabel->text().contains(QStringLiteral("良乡大学城北站")));
-    log(QStringLiteral("初始联动：站点1 → 3 个电桩"));
+    CHECK(scopeCombo->currentIndex() == 1
+          && scopeCombo->currentText().contains(QStringLiteral("良乡大学城北站")));
+    CHECK(pileTable->isColumnHidden(1));
+    log(QStringLiteral("初始联动：站点1 → 3 个电桩，所属站列隐藏"));
 
     // 切换站点 → 电桩联动刷新
     stationTable->selectRow(1);
     CHECK(waitFor([&] { return pileTable->rowCount() == 2; }));
     CHECK(columnTexts(pileTable, 0, false)
           == (QStringList{QStringLiteral("P-0201"), QStringLiteral("P-0202")}));
-    CHECK(stationLabel->text().contains(QStringLiteral("长阳地铁站充电站")));
+    CHECK(scopeCombo->currentText().contains(QStringLiteral("长阳地铁站充电站")));
     log(QStringLiteral("切换站点2 → 2 个电桩"));
 
     stationTable->selectRow(0);
     CHECK(waitFor([&] { return pileTable->rowCount() == 3; }));
+
+    // 全部站点模式：所属站列显示，5 个电桩带站点名；切回单站模式列复隐
+    scopeCombo->setCurrentIndex(0);
+    CHECK(waitFor([&] { return pileTable->rowCount() == 5; }));
+    CHECK(!pileTable->isColumnHidden(1));
+    CHECK(columnTexts(pileTable, 0, false)
+          == (QStringList{QStringLiteral("P-0101"), QStringLiteral("P-0102"), QStringLiteral("P-0103"),
+                          QStringLiteral("P-0201"), QStringLiteral("P-0202")}));
+    CHECK(pileTable->item(0, 1)->text().contains(QStringLiteral("良乡大学城北站")));
+    CHECK(pileTable->item(3, 1)->text().contains(QStringLiteral("长阳地铁站充电站")));
+    // 全部站点模式下左侧切换站点不影响电桩列表
+    stationTable->selectRow(1);
+    QTest::qWait(150);
+    CHECK(pileTable->rowCount() == 5);
+    CHECK(scopeCombo->itemText(1).contains(QStringLiteral("长阳地铁站充电站")));
+    log(QStringLiteral("全部站点模式：5 个电桩，所属站列显示"));
+    scopeCombo->setCurrentIndex(1);
+    CHECK(waitFor([&] { return pileTable->rowCount() == 2; }));
+    CHECK(pileTable->isColumnHidden(1));
+    stationTable->selectRow(0);
+    CHECK(waitFor([&] { return pileTable->rowCount() == 3; }));
+    log(QStringLiteral("切回单站模式：所属站列复隐"));
 
     // 按电桩状态校验操作按钮使能（v2.3：重启 idle+fault、禁用仅 idle、占用详情仅 in_use）
     auto selectPile = [&](const QString &code) {
@@ -375,7 +450,7 @@ static void scenarioStationOps(const QString &host, quint16 port)
     win.show();
     CHECK(waitFor([&win] { return win.isVisible(); }));
     QListWidget *nav = win.findChild<QListWidget *>(QStringLiteral("listWidgetNav"));
-    nav->setCurrentRow(2);
+    nav->setCurrentRow(1);
 
     StationPilePage *page = win.findChild<StationPilePage *>();
     QTableWidget *stationTable = win.findChild<QTableWidget *>(QStringLiteral("stationTable"));
@@ -424,7 +499,7 @@ static void scenarioStationOps(const QString &host, quint16 port)
         edits[1]->setText(QStringLiteral("良乡大学城北站-改"));
         d->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
     };
-    CHECK(clickRowButton(stationTable, row, 7, QStringLiteral("修改")));
+    CHECK(clickRowButton(stationTable, row, 6, QStringLiteral("修改")));
     CHECK(waitFor([&] { return rowOfText(stationTable, 1, QStringLiteral("良乡大学城北站-改")) >= 0; }));
     log(QStringLiteral("修改站点"));
 
@@ -443,7 +518,7 @@ static void scenarioStationOps(const QString &host, quint16 port)
     // 删除导入的站点（行内删除 + 确认弹窗自动「是」）
     row = rowOfText(stationTable, 1, QStringLiteral("导入测试站"));
     CHECK(row >= 0);
-    CHECK(clickRowButton(stationTable, row, 7, QStringLiteral("删除")));
+    CHECK(clickRowButton(stationTable, row, 6, QStringLiteral("删除")));
     CHECK(waitFor([&] {
         return rowOfText(stationTable, 1, QStringLiteral("导入测试站")) < 0
                && stationTable->rowCount() == 3;
@@ -457,7 +532,7 @@ static void scenarioStationOps(const QString &host, quint16 port)
     CHECK(waitFor([&] { return stationTable->rowCount() == 4; }));
     int delRow = -1;
     for (int r = 0; r < stationTable->rowCount(); ++r)
-        if (stationTable->item(r, 6) && stationTable->item(r, 6)->text() == QStringLiteral("已删除"))
+        if (stationTable->item(r, 5) && stationTable->item(r, 5)->text() == QStringLiteral("已删除"))
             delRow = r;
     CHECK(delRow >= 0);
 
@@ -483,7 +558,7 @@ static void scenarioPileOps(const QString &host, quint16 port)
     win.show();
     CHECK(waitFor([&win] { return win.isVisible(); }));
     QListWidget *nav = win.findChild<QListWidget *>(QStringLiteral("listWidgetNav"));
-    nav->setCurrentRow(2);
+    nav->setCurrentRow(1);
 
     QTableWidget *pileTable = win.findChild<QTableWidget *>(QStringLiteral("pileTable"));
     QPushButton *addPileBtn = findButton(&win, QStringLiteral("新增电桩"));
@@ -507,7 +582,7 @@ static void scenarioPileOps(const QString &host, quint16 port)
     };
     auto statusOf = [&](const QString &code) {
         const int row = rowOfText(pileTable, 0, code);
-        return row >= 0 ? pileTable->item(row, 3)->text() : QString();
+        return row >= 0 ? pileTable->item(row, 4)->text() : QString();
     };
 
     // 新增电桩（对话框只填编号，所属站点默认当前选中站点）
@@ -533,7 +608,7 @@ static void scenarioPileOps(const QString &host, quint16 port)
     QTest::mouseClick(editPileBtn, Qt::LeftButton, Qt::NoModifier, editPileBtn->rect().center());
     CHECK(waitFor([&] {
         const int r = rowOfText(pileTable, 0, QStringLiteral("P-9001"));
-        return r >= 0 && pileTable->item(r, 2)->text() == QStringLiteral("30");
+        return r >= 0 && pileTable->item(r, 3)->text() == QStringLiteral("30");
     }));
     log(QStringLiteral("修改电桩"));
 
@@ -583,7 +658,7 @@ static void scenarioPileOps(const QString &host, quint16 port)
     CHECK(waitFor([&] { return pileTable->rowCount() == 4; }));
     int delRow = -1;
     for (int r = 0; r < pileTable->rowCount(); ++r)
-        if (pileTable->item(r, 3) && pileTable->item(r, 3)->text() == QStringLiteral("已删除"))
+        if (pileTable->item(r, 4) && pileTable->item(r, 4)->text() == QStringLiteral("已删除"))
             delRow = r;
     CHECK(delRow >= 0);
     pileTable->selectRow(delRow);
@@ -606,7 +681,7 @@ static void scenarioFilterSort(const QString &host, quint16 port)
     win.show();
     CHECK(waitFor([&win] { return win.isVisible(); }));
     QListWidget *nav = win.findChild<QListWidget *>(QStringLiteral("listWidgetNav"));
-    nav->setCurrentRow(2);
+    nav->setCurrentRow(1);
 
     QTableWidget *stationTable = win.findChild<QTableWidget *>(QStringLiteral("stationTable"));
     QTableWidget *pileTable = win.findChild<QTableWidget *>(QStringLiteral("pileTable"));
@@ -616,19 +691,19 @@ static void scenarioFilterSort(const QString &host, quint16 port)
     CHECK(waitFor([&] { return pileTable->rowCount() == 3; }));
 
     // ---- 电桩表排序：功率 升序→降序→不排序（不排序还原装入顺序） ----
-    headerSortClick(pileTable, 2);
+    headerSortClick(pileTable, 3);
     CHECK(columnTexts(pileTable, 0, false)
           == (QStringList{QStringLiteral("P-0102"), QStringLiteral("P-0101"), QStringLiteral("P-0103")}));
-    headerSortClick(pileTable, 2);
+    headerSortClick(pileTable, 3);
     CHECK(columnTexts(pileTable, 0, false)
           == (QStringList{QStringLiteral("P-0103"), QStringLiteral("P-0101"), QStringLiteral("P-0102")}));
-    headerSortClick(pileTable, 2);
+    headerSortClick(pileTable, 3);
     CHECK(columnTexts(pileTable, 0, false)
           == (QStringList{QStringLiteral("P-0101"), QStringLiteral("P-0102"), QStringLiteral("P-0103")}));
     log(QStringLiteral("电桩表 功率 升/降/不排序"));
 
     // ---- 电桩表筛选：类型列去掉「慢充」→ P-0102 隐藏 ----
-    headerFunnelClick(pileTable, 1);
+    headerFunnelClick(pileTable, 2);
     CHECK(popupDenyValueAndOk(QStringLiteral("慢充")));
     CHECK(visibleRows(pileTable) == 2);
     CHECK(columnTexts(pileTable, 0, true)
@@ -636,32 +711,32 @@ static void scenarioFilterSort(const QString &host, quint16 port)
     log(QStringLiteral("电桩表 类型筛选（隐藏慢充）"));
 
     // ---- 筛选与排序叠加：保持筛选，功率降序 ----
-    headerSortClick(pileTable, 2); // 升序
-    headerSortClick(pileTable, 2); // 降序
+    headerSortClick(pileTable, 3); // 升序
+    headerSortClick(pileTable, 3); // 降序
     CHECK(columnTexts(pileTable, 0, true)
           == (QStringList{QStringLiteral("P-0103"), QStringLiteral("P-0101")}));
-    headerSortClick(pileTable, 2); // 不排序
+    headerSortClick(pileTable, 3); // 不排序
     log(QStringLiteral("筛选+排序叠加"));
 
     // ---- 清除筛选 → 全部恢复可见 ----
-    headerFunnelClick(pileTable, 1);
+    headerFunnelClick(pileTable, 2);
     CHECK(popupClearFilter());
     CHECK(visibleRows(pileTable) == 3);
     log(QStringLiteral("清除筛选"));
 
     // ---- 站点表排序与 tooltip 作用范围说明 ----
     CHECK(stationTable->horizontalHeaderItem(1)->toolTip().contains(QStringLiteral("当前页")));
-    headerSortClick(stationTable, 4); // 总桩数 升序：2 个桩的站点在前
+    headerSortClick(stationTable, 4); // 桩数/在线率（合并列，排序键取桩数）升序：2 个桩的站点在前
     CHECK(columnTexts(stationTable, 0, true)
           == (QStringList{QStringLiteral("2"), QStringLiteral("1")}));
     headerSortClick(stationTable, 4); // 降序
     CHECK(columnTexts(stationTable, 0, true)
           == (QStringList{QStringLiteral("1"), QStringLiteral("2")}));
     headerSortClick(stationTable, 4); // 不排序还原
-    log(QStringLiteral("站点表 总桩数排序（含操作列单元格控件整行搬运）"));
+    log(QStringLiteral("站点表 桩数/在线率排序（合并列按桩数排序键，含操作列单元格控件整行搬运）"));
 
     // ---- 用户管理页 ----
-    nav->setCurrentRow(3);
+    nav->setCurrentRow(2);
     QTableWidget *userTable = win.findChild<QTableWidget *>(QStringLiteral("userTable"));
     CHECK(userTable != nullptr);
     CHECK(waitFor([&] { return userTable->rowCount() == 2; }));
@@ -687,11 +762,24 @@ static void scenarioFilterSort(const QString &host, quint16 port)
     log(QStringLiteral("用户页 排序/筛选/跨重载保持"));
 
     // ---- 订单管理页 ----
-    nav->setCurrentRow(4);
+    nav->setCurrentRow(3);
     QTableWidget *orderTable = win.findChild<QTableWidget *>(QStringLiteral("orderTable"));
     CHECK(orderTable != nullptr);
     CHECK(waitFor([&] { return orderTable->rowCount() == 3; }));
     CHECK(orderTable->horizontalHeaderItem(0)->toolTip().contains(QStringLiteral("当前页")));
+    // 结算时间列紧凑格式 MM-dd HH:mm（不含秒；未结算为「—」），完整时间保留在 tooltip
+    const QRegularExpression shortTime(QStringLiteral("^\\d{2}-\\d{2} \\d{2}:\\d{2}$"));
+    bool sawSettled = false;
+    for (int r = 0; r < orderTable->rowCount(); ++r) {
+        QTableWidgetItem *it = orderTable->item(r, 7);
+        if (!it || it->text() == QStringLiteral("—"))
+            continue;
+        sawSettled = true;
+        CHECK(shortTime.match(it->text()).hasMatch());
+        CHECK(it->toolTip().length() > it->text().length()); // tooltip 保留完整时间
+    }
+    CHECK(sawSettled);
+    log(QStringLiteral("订单页 结算时间列紧凑格式（MM-dd HH:mm，无秒）"));
     headerSortClick(orderTable, 0); // 订单号 升序
     CHECK(columnTexts(orderTable, 0, false)
           == (QStringList{QStringLiteral("10001"), QStringLiteral("10002"), QStringLiteral("10003")}));
@@ -709,7 +797,7 @@ static void scenarioFilterSort(const QString &host, quint16 port)
     log(QStringLiteral("订单页 排序/筛选/清除"));
 
     // ---- 系统管理页：管理员列表 + 账号操作 ----
-    nav->setCurrentRow(5);
+    nav->setCurrentRow(4);
     QTableWidget *adminTable = win.findChild<QTableWidget *>(QStringLiteral("tableAdmins"));
     CHECK(adminTable != nullptr);
     CHECK(waitFor([&] { return adminTable->rowCount() == 1; }));

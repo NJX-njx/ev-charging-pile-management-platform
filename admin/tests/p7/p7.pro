@@ -1,7 +1,7 @@
 # admin 模块 p7 改版验证 harness（offscreen）：链接真实 admin 源码 +
 # tools/mock_server_v23.py 状态化假服务端，脚本化驱动 UI 断言：
-# 导航 6 项可见/窗口尺寸、站点与电桩合并页左右联动与全部操作、
-# 全列表 Excel 式筛选排序、系统页管理员操作。
+# 导航 5 项可见/窗口尺寸/列宽、站点与电桩合并页状态条与全部站点模式、
+# 左右联动与全部操作、全列表 Excel 式筛选排序、系统页管理员操作。
 # 不属于交付模块，仅用于开发验证；用法见 run_scenarios.sh。
 
 QT += core gui widgets network testlib
@@ -25,7 +25,6 @@ SOURCES += \
     $$SRC/ui/loginwindow.cpp \
     $$SRC/ui/mainwindow.cpp \
     $$SRC/ui/orderpage.cpp \
-    $$SRC/ui/pilestatuspage.cpp \
     $$SRC/ui/salespage.cpp \
     $$SRC/ui/stationpilepage.cpp \
     $$SRC/ui/systempage.cpp \
@@ -37,7 +36,6 @@ HEADERS += \
     $$SRC/ui/loginwindow.h \
     $$SRC/ui/mainwindow.h \
     $$SRC/ui/orderpage.h \
-    $$SRC/ui/pilestatuspage.h \
     $$SRC/ui/salespage.h \
     $$SRC/ui/stationpilepage.h \
     $$SRC/ui/systempage.h \
