@@ -18,12 +18,21 @@ public:
 
 private slots:
     void onToggleStatus();
+    void onAddUser();
+    void onEditUser();
+    void onResetPassword();
+    void onDeleteUser();
 
 private:
     void loadUsers(const QString &phoneKeyword);
+    int selectedRow() const;
 
     SocketClient *m_client;
     QLineEdit *m_searchEdit;
     QTableWidget *m_table;
+    QPushButton *m_addBtn;
+    QPushButton *m_editBtn;
+    QPushButton *m_resetPwdBtn;
+    QPushButton *m_deleteBtn;
     QPushButton *m_toggleBtn;
 };

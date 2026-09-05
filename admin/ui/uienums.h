@@ -53,4 +53,34 @@ inline QColor userStatusColor(const QString &status)
     return QColor(46, 125, 50);
 }
 
+inline QString orderStatusText(const QString &status)
+{
+    if (status == QStringLiteral("reserved"))
+        return QStringLiteral("已预约");
+    if (status == QStringLiteral("charging"))
+        return QStringLiteral("充电中");
+    if (status == QStringLiteral("pending_payment"))
+        return QStringLiteral("待结算");
+    if (status == QStringLiteral("completed"))
+        return QStringLiteral("已完成");
+    if (status == QStringLiteral("cancelled"))
+        return QStringLiteral("已取消");
+    return status;
+}
+
+inline QColor orderStatusColor(const QString &status)
+{
+    if (status == QStringLiteral("reserved"))
+        return QColor(21, 101, 192);
+    if (status == QStringLiteral("charging"))
+        return QColor(21, 101, 192);
+    if (status == QStringLiteral("pending_payment"))
+        return QColor(237, 108, 2);
+    if (status == QStringLiteral("completed"))
+        return QColor(46, 125, 50);
+    if (status == QStringLiteral("cancelled"))
+        return QColor(107, 114, 128);
+    return QColor(0, 0, 0);
+}
+
 } // namespace UiEnums

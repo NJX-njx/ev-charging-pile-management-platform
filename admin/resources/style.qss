@@ -68,14 +68,14 @@ QPushButton[primary="true"]:disabled {
 }
 
 /* 输入控件 */
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit {
     background: #FFFFFF;
     border: 1px solid #E0E3E6;
     border-radius: 4px;
     padding: 4px 6px;
     selection-background-color: #00A870;
 }
-QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QDateEdit:focus {
     border-color: #00A870;
 }
 
@@ -100,4 +100,10 @@ QHeaderView::section {
 /* 登录窗口 */
 QWidget#LoginWindow {
     background: #F5F6F7;
+}
+
+/* 详情对话框分组标题 */
+QLabel#sectionTitle {
+    color: #6B7280;
+    font-weight: bold;
 }
