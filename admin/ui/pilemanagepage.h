@@ -21,6 +21,8 @@ public:
 
 private slots:
     void onRestartClicked();
+    void onDisableClicked();
+    void onShowActiveOrder();
     void onAddPile();
     void onEditPile();
     void onDeletePile();
@@ -37,4 +39,6 @@ private:
     QPushButton *m_editBtn;
     QPushButton *m_deleteBtn;
     QPushButton *m_restartBtn;
+    QPushButton *m_disableBtn;
+    QPushButton *m_activeOrderBtn;
 };

@@ -1,7 +1,9 @@
-#include "adminmanagedialog.h"
+#include "systempage.h"
 
+#include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QJsonArray>
@@ -16,15 +18,33 @@
 
 #include "net/socketclient.h"
 
-AdminManageDialog::AdminManageDialog(SocketClient *client, const QString &currentUsername,
-                                     QWidget *parent)
-    : QDialog(parent), m_client(client), m_currentUsername(currentUsername)
+SystemPage::SystemPage(SocketClient *client, const QString &currentUsername, QWidget *parent)
+    : QWidget(parent), m_client(client), m_currentUsername(currentUsername)
 {
-    setWindowTitle(QStringLiteral("管理员账号管理"));
-    resize(420, 360);
+    setObjectName(QStringLiteral("page"));
     QVBoxLayout *root = new QVBoxLayout(this);
 
-    root->addWidget(new QLabel(QStringLiteral("管理员账号无公开注册，仅可由已登录管理员新增或删除")));
+    root->addWidget(createAdminCard(), 1);
+    root->addWidget(createSecurityCard());
+    root->addStretch();
+
+    connect(m_addBtn, &QPushButton::clicked, this, &SystemPage::onAddAdmin);
+    connect(m_deleteBtn, &QPushButton::clicked, this, &SystemPage::onDeleteAdmin);
+    connect(m_table, &QTableWidget::itemSelectionChanged, this, &SystemPage::updateActionButtons);
+    connect(m_changePwdBtn, &QPushButton::clicked, this, &SystemPage::onChangePassword);
+}
+
+QWidget *SystemPage::createAdminCard()
+{
+    QFrame *card = new QFrame;
+    card->setObjectName(QStringLiteral("card"));
+    card->setFrameShape(QFrame::StyledPanel);
+    QVBoxLayout *layout = new QVBoxLayout(card);
+
+    QLabel *title = new QLabel(QStringLiteral("管理员账号"));
+    title->setObjectName(QStringLiteral("sectionTitle"));
+    layout->addWidget(title);
+    layout->addWidget(new QLabel(QStringLiteral("管理员账号无公开注册，仅可由已登录管理员新增或删除")));
 
     m_table = new QTableWidget;
     m_table->setObjectName(QStringLiteral("tableAdmins"));
@@ -37,7 +57,7 @@ AdminManageDialog::AdminManageDialog(SocketClient *client, const QString &curren
     m_table->setAlternatingRowColors(true);
     m_table->verticalHeader()->setVisible(false);
     m_table->verticalHeader()->setDefaultSectionSize(36);
-    root->addWidget(m_table, 1);
+    layout->addWidget(m_table, 1);
 
     QHBoxLayout *actions = new QHBoxLayout;
     m_addBtn = new QPushButton(QStringLiteral("新增管理员"));
@@ -51,20 +71,57 @@ AdminManageDialog::AdminManageDialog(SocketClient *client, const QString &curren
     QPushButton *refreshBtn = new QPushButton(QStringLiteral("刷新"));
     actions->addWidget(refreshBtn);
     actions->addStretch();
-    QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Close);
-    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-    actions->addWidget(buttons);
-    root->addLayout(actions);
+    layout->addLayout(actions);
 
-    connect(refreshBtn, &QPushButton::clicked, this, &AdminManageDialog::loadAdmins);
-    connect(m_addBtn, &QPushButton::clicked, this, &AdminManageDialog::onAddAdmin);
-    connect(m_deleteBtn, &QPushButton::clicked, this, &AdminManageDialog::onDeleteAdmin);
-    connect(m_table, &QTableWidget::itemSelectionChanged, this, &AdminManageDialog::updateActionButtons);
+    connect(refreshBtn, &QPushButton::clicked, this, &SystemPage::loadAdmins);
+    return card;
+}
 
+QWidget *SystemPage::createSecurityCard()
+{
+    QFrame *card = new QFrame;
+    card->setObjectName(QStringLiteral("card"));
+    card->setFrameShape(QFrame::StyledPanel);
+    QVBoxLayout *layout = new QVBoxLayout(card);
+
+    QLabel *title = new QLabel(QStringLiteral("安全"));
+    title->setObjectName(QStringLiteral("sectionTitle"));
+    layout->addWidget(title);
+
+    QFormLayout *form = new QFormLayout;
+    m_oldPwdEdit = new QLineEdit;
+    m_oldPwdEdit->setObjectName(QStringLiteral("editOldPwd"));
+    m_oldPwdEdit->setEchoMode(QLineEdit::Password);
+    m_oldPwdEdit->setPlaceholderText(QStringLiteral("请输入当前使用的密码"));
+    m_newPwdEdit = new QLineEdit;
+    m_newPwdEdit->setObjectName(QStringLiteral("editNewPwd"));
+    m_newPwdEdit->setEchoMode(QLineEdit::Password);
+    m_newPwdEdit->setPlaceholderText(QStringLiteral("6 至 20 位，不含空白字符"));
+    m_confirmPwdEdit = new QLineEdit;
+    m_confirmPwdEdit->setObjectName(QStringLiteral("editNewPwd2"));
+    m_confirmPwdEdit->setEchoMode(QLineEdit::Password);
+    m_confirmPwdEdit->setPlaceholderText(QStringLiteral("再次输入新密码"));
+    form->addRow(QStringLiteral("原密码"), m_oldPwdEdit);
+    form->addRow(QStringLiteral("新密码"), m_newPwdEdit);
+    form->addRow(QStringLiteral("确认新密码"), m_confirmPwdEdit);
+    layout->addLayout(form);
+
+    QHBoxLayout *actions = new QHBoxLayout;
+    m_changePwdBtn = new QPushButton(QStringLiteral("修改密码"));
+    m_changePwdBtn->setObjectName(QStringLiteral("btnChangePwd"));
+    m_changePwdBtn->setProperty("primary", true);
+    actions->addWidget(m_changePwdBtn);
+    actions->addStretch();
+    layout->addLayout(actions);
+    return card;
+}
+
+void SystemPage::refresh()
+{
     loadAdmins();
 }
 
-int AdminManageDialog::selectedRow() const
+int SystemPage::selectedRow() const
 {
     const auto items = m_table->selectedItems();
     if (items.isEmpty())
@@ -72,12 +129,12 @@ int AdminManageDialog::selectedRow() const
     return items.first()->row();
 }
 
-void AdminManageDialog::updateActionButtons()
+void SystemPage::updateActionButtons()
 {
     m_deleteBtn->setEnabled(selectedRow() >= 0);
 }
 
-void AdminManageDialog::loadAdmins()
+void SystemPage::loadAdmins()
 {
     m_client->sendRequest(QStringLiteral("admin_list"), QJsonObject(),
                           [this](int code, const QString &msg, const QJsonObject &data) {
@@ -106,7 +163,7 @@ void AdminManageDialog::loadAdmins()
                           });
 }
 
-void AdminManageDialog::onAddAdmin()
+void SystemPage::onAddAdmin()
 {
     QDialog dialog(this);
     dialog.setWindowTitle(QStringLiteral("新增管理员"));
@@ -168,7 +225,7 @@ void AdminManageDialog::onAddAdmin()
                           });
 }
 
-void AdminManageDialog::onDeleteAdmin()
+void SystemPage::onDeleteAdmin()
 {
     const int row = selectedRow();
     if (row < 0)
@@ -201,6 +258,54 @@ void AdminManageDialog::onDeleteAdmin()
                                                        QStringLiteral("不能删除当前登录的本人账号或最后一个管理员账号"));
                               } else {
                                   QMessageBox::warning(this, QStringLiteral("删除管理员失败"), msg);
+                              }
+                          });
+}
+
+void SystemPage::onChangePassword()
+{
+    if (m_pwdUpdatePending)
+        return;
+
+    const QString oldPassword = m_oldPwdEdit->text();
+    const QString newPassword = m_newPwdEdit->text();
+    if (oldPassword.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("修改密码"), QStringLiteral("请输入原密码"));
+        return;
+    }
+    static const QRegularExpression ws(QStringLiteral("\\s"));
+    if (newPassword.size() < 6 || newPassword.size() > 20 || ws.match(newPassword).hasMatch()) {
+        QMessageBox::warning(this, QStringLiteral("修改密码"), QStringLiteral("新密码须为 6 至 20 位且不含空白字符"));
+        return;
+    }
+    if (newPassword != m_confirmPwdEdit->text()) {
+        QMessageBox::warning(this, QStringLiteral("修改密码"), QStringLiteral("两次输入的新密码不一致"));
+        return;
+    }
+    if (newPassword == oldPassword) {
+        QMessageBox::warning(this, QStringLiteral("修改密码"), QStringLiteral("新密码不能与原密码相同"));
+        return;
+    }
+
+    QJsonObject payload;
+    payload[QStringLiteral("oldPassword")] = oldPassword;
+    payload[QStringLiteral("newPassword")] = newPassword;
+
+    m_pwdUpdatePending = true;
+    m_changePwdBtn->setEnabled(false);
+    m_client->sendRequest(QStringLiteral("admin_password_update"), payload,
+                          [this, newPassword](int code, const QString &msg, const QJsonObject &) {
+                              m_pwdUpdatePending = false;
+                              m_changePwdBtn->setEnabled(true);
+                              if (code == 0) {
+                                  m_oldPwdEdit->clear();
+                                  m_newPwdEdit->clear();
+                                  m_confirmPwdEdit->clear();
+                                  emit passwordChanged(newPassword);
+                                  QMessageBox::information(this, QStringLiteral("修改密码"),
+                                                           QStringLiteral("密码修改成功，下次登录请使用新密码"));
+                              } else {
+                                  QMessageBox::warning(this, QStringLiteral("修改密码失败"), msg);
                               }
                           });
 }

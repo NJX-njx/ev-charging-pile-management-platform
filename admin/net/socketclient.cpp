@@ -39,7 +39,18 @@ void SocketClient::connectToServer(const QString &host, quint16 port)
 {
     m_host = host;
     m_port = port;
+    // 已有连接/连接中时先断开，避免在旧 socket 状态上重复 connectToHost
+    if (m_socket->state() != QAbstractSocket::UnconnectedState)
+        m_socket->abort();
     m_socket->connectToHost(host, port);
+}
+
+void SocketClient::abortConnection()
+{
+    m_reconnectTimer->stop();
+    m_host.clear();
+    m_port = 0;
+    m_socket->abort();
 }
 
 bool SocketClient::isConnected() const

@@ -11,7 +11,6 @@ TEMPLATE = app
 SOURCES += \
     main.cpp \
     net/socketclient.cpp \
-    ui/adminmanagedialog.cpp \
     ui/loginwindow.cpp \
     ui/mainwindow.cpp \
     ui/orderpage.cpp \
@@ -19,11 +18,11 @@ SOURCES += \
     ui/pilestatuspage.cpp \
     ui/salespage.cpp \
     ui/stationpage.cpp \
+    ui/systempage.cpp \
     ui/userpage.cpp
 
 HEADERS += \
     net/socketclient.h \
-    ui/adminmanagedialog.h \
     ui/loginwindow.h \
     ui/mainwindow.h \
     ui/orderpage.h \
@@ -31,6 +30,7 @@ HEADERS += \
     ui/pilestatuspage.h \
     ui/salespage.h \
     ui/stationpage.h \
+    ui/systempage.h \
     ui/uienums.h \
     ui/userpage.h
 

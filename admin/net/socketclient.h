@@ -19,8 +19,12 @@ public:
     explicit SocketClient(QObject *parent = nullptr);
 
     void connectToServer(const QString &host, quint16 port);
+    // 放弃当前连接与自动重连（登录页连接超时/更换地址时使用）
+    void abortConnection();
     int sendRequest(const QString &type, const QJsonObject &payload, Callback callback);
     bool isConnected() const;
+    QString host() const { return m_host; }
+    quint16 port() const { return m_port; }
 
 signals:
     void connected();
