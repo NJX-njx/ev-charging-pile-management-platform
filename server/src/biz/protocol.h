@@ -28,15 +28,23 @@ bool readInt(const QJsonObject &obj, const QString &key, qint64 min, qint64 max,
 bool readMoneyFen(const QJsonObject &obj, const QString &key, qint64 maxFen, qint64 &outFen);
 bool readLngLat(const QJsonObject &obj, double &lng, double &lat);
 
+// Password rules: 6-20 chars, no whitespace. Records are stored as "saltHex:sha256Hex".
+bool isValidPassword(const QString &password);
+QString passwordRecord(const QString &password);
+bool verifyPassword(const QString &record, const QString &password);
+
 QJsonObject userJson(const QSqlQuery &q, bool withAvatar);
 QJsonObject stationSummaryJson(const QSqlQuery &q);
 QJsonObject pileJson(const QSqlQuery &q);
 QJsonObject orderJson(const QSqlQuery &q);
+// Same row shape as kOrderSelect plus u.phone at index 14.
+QJsonObject adminOrderJson(const QSqlQuery &q);
 
 extern const char *const kUserSelect;
 extern const char *const kStationAggregateSelect;
 extern const char *const kPileSelect;
 extern const char *const kOrderSelect;
+extern const char *const kAdminOrderSelect;
 
 } // namespace Protocol
 

@@ -23,6 +23,8 @@ const char *const kSchema[] = {
     " status TEXT NOT NULL DEFAULT 'normal',"
     " avatarMime TEXT,"
     " avatarBase64 TEXT,"
+    " passwordHash TEXT,"
+    " deleted INTEGER NOT NULL DEFAULT 0,"
     " regTime INTEGER NOT NULL)",
     "CREATE TABLE IF NOT EXISTS stations ("
     " stationId INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -30,7 +32,8 @@ const char *const kSchema[] = {
     " address TEXT NOT NULL,"
     " lng REAL NOT NULL,"
     " lat REAL NOT NULL,"
-    " priceFenPerKwh INTEGER NOT NULL)",
+    " priceFenPerKwh INTEGER NOT NULL,"
+    " deleted INTEGER NOT NULL DEFAULT 0)",
     "CREATE TABLE IF NOT EXISTS piles ("
     " pileId INTEGER PRIMARY KEY AUTOINCREMENT,"
     " code TEXT NOT NULL UNIQUE,"
@@ -39,7 +42,8 @@ const char *const kSchema[] = {
     " powerKw REAL NOT NULL,"
     " status TEXT NOT NULL DEFAULT 'idle',"
     " chargeCount INTEGER NOT NULL DEFAULT 0,"
-    " chargeMinutes INTEGER NOT NULL DEFAULT 0)",
+    " chargeMinutes INTEGER NOT NULL DEFAULT 0,"
+    " deleted INTEGER NOT NULL DEFAULT 0)",
     "CREATE TABLE IF NOT EXISTS orders ("
     " orderId INTEGER PRIMARY KEY AUTOINCREMENT,"
     " userId INTEGER NOT NULL REFERENCES users(userId),"
@@ -56,8 +60,13 @@ const char *const kSchema[] = {
     "CREATE TABLE IF NOT EXISTS counters ("
     " key TEXT PRIMARY KEY,"
     " value INTEGER NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS codes ("
+    " phone TEXT PRIMARY KEY,"
+    " code TEXT NOT NULL,"
+    " expiresAtEpoch INTEGER NOT NULL)",
     "CREATE INDEX IF NOT EXISTS idx_orders_user_status ON orders(userId, status)",
     "CREATE INDEX IF NOT EXISTS idx_orders_settled ON orders(status, settledAt)",
+    "CREATE INDEX IF NOT EXISTS idx_orders_reserved ON orders(reservedAt)",
     "CREATE INDEX IF NOT EXISTS idx_piles_station ON piles(stationId)",
 };
 
@@ -80,6 +89,30 @@ bool applyPragmas(QSqlDatabase &db, QString *errorMessage)
 }
 
 } // namespace
+
+// Adds columns introduced after the v1 schema to databases created by older
+// builds; a fresh database already has them via kSchema, making this a no-op.
+bool ensureColumn(QSqlDatabase &db, const char *table, const char *column,
+                  const char *definition, QString *errorMessage)
+{
+    QSqlQuery q(db);
+    if (!q.exec(QStringLiteral("PRAGMA table_info(%1)").arg(QLatin1String(table)))) {
+        if (errorMessage)
+            *errorMessage = q.lastError().text();
+        return false;
+    }
+    while (q.next()) {
+        if (q.value(1).toString() == QLatin1String(column))
+            return true;
+    }
+    if (!q.exec(QStringLiteral("ALTER TABLE %1 ADD COLUMN %2")
+                    .arg(QLatin1String(table), QLatin1String(definition)))) {
+        if (errorMessage)
+            *errorMessage = q.lastError().text();
+        return false;
+    }
+    return true;
+}
 
 void Database::configure(const QString &path)
 {
@@ -124,6 +157,21 @@ bool Database::initialize(QString *errorMessage)
                 *errorMessage = q.lastError().text();
             return false;
         }
+    }
+    static const struct {
+        const char *table;
+        const char *column;
+        const char *definition;
+    } kMigrations[] = {
+        {"users", "passwordHash", "passwordHash TEXT"},
+        {"users", "deleted", "deleted INTEGER NOT NULL DEFAULT 0"},
+        {"stations", "deleted", "deleted INTEGER NOT NULL DEFAULT 0"},
+        {"piles", "deleted", "deleted INTEGER NOT NULL DEFAULT 0"},
+    };
+    for (const auto &migration : kMigrations) {
+        if (!ensureColumn(db, migration.table, migration.column, migration.definition,
+                          errorMessage))
+            return false;
     }
     if (!q.exec(QStringLiteral("SELECT COUNT(*) FROM admins")) || !q.next()) {
         if (errorMessage)

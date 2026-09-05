@@ -3,11 +3,12 @@
 #include "stats.h"
 #include "timeutil.h"
 
-#include <QCryptographicHash>
 #include <QJsonArray>
+#include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QStringList>
 #include <QVariant>
 #include <cmath>
 
@@ -17,6 +18,8 @@ constexpr qint64 kMaxId = (1LL << 52);
 constexpr qint64 kMaxRechargeFen = 10000 * 100;
 constexpr qint64 kMaxPriceFen = 1000000 * 100;
 constexpr int kMaxAvatarBytes = 512 * 1024;
+const QString kInitialPassword = QStringLiteral("123456");
+const char *const kUnfinishedOrders = "('reserved', 'charging', 'pending_payment')";
 
 Response fail(int code, const QString &msg)
 {
@@ -34,6 +37,81 @@ bool exec(QSqlQuery &q)
         return true;
     qWarning() << "SQL error:" << q.lastError().text();
     return false;
+}
+
+bool validPhone(const QString &phone)
+{
+    static const QRegularExpression re(QStringLiteral("^1[0-9]{10}$"));
+    return re.match(phone).hasMatch();
+}
+
+bool validPileType(const QString &type)
+{
+    return type == QLatin1String("fast") || type == QLatin1String("slow");
+}
+
+bool validOrderStatus(const QString &status)
+{
+    return status == QLatin1String("reserved") || status == QLatin1String("charging")
+        || status == QLatin1String("pending_payment") || status == QLatin1String("completed")
+        || status == QLatin1String("cancelled");
+}
+
+bool readPowerKw(const QJsonObject &p, double &out)
+{
+    const QJsonValue v = p.value(QStringLiteral("powerKw"));
+    if (!v.isDouble())
+        return false;
+    const double d = v.toDouble();
+    if (!std::isfinite(d) || d <= 0.0)
+        return false;
+    out = d;
+    return true;
+}
+
+// Returns the date for an optional "yyyy-MM-dd" payload field; present=false when absent/null.
+bool readDate(const QJsonObject &p, const QString &key, QDate &out, bool &present)
+{
+    present = p.contains(key) && !p.value(key).isNull();
+    if (!present)
+        return true;
+    if (!p.value(key).isString())
+        return false;
+    const QString text = p.value(key).toString();
+    static const QRegularExpression re(QStringLiteral("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"));
+    if (!re.match(text).hasMatch())
+        return false;
+    const QDate date = QDate::fromString(text, QStringLiteral("yyyy-MM-dd"));
+    if (!date.isValid())
+        return false;
+    out = date;
+    return true;
+}
+
+enum class CodeCheck { Ok, Mismatch, DbError };
+
+// One-time SMS-style code: consumed on success; expired rows are removed lazily.
+CodeCheck consumeSmsCode(QSqlDatabase db, const QString &phone, const QString &code)
+{
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral("SELECT code, expiresAtEpoch FROM codes WHERE phone = ?"));
+    q.addBindValue(phone);
+    if (!exec(q))
+        return CodeCheck::DbError;
+    if (!q.next())
+        return CodeCheck::Mismatch;
+    const bool expired = q.value(1).toLongLong() < TimeUtil::nowSecs();
+    const bool match = q.value(0).toString() == code;
+    if (expired || match) {
+        QSqlQuery del(db);
+        del.prepare(QStringLiteral("DELETE FROM codes WHERE phone = ?"));
+        del.addBindValue(phone);
+        if (!exec(del))
+            return CodeCheck::DbError;
+    }
+    if (expired || !match)
+        return CodeCheck::Mismatch;
+    return CodeCheck::Ok;
 }
 
 // Column 13 of kOrderSelect is o.userId, used for ownership checks only.
@@ -79,9 +157,12 @@ Response finishUserLogin(QSqlQuery &q, Session &s, bool isNew)
 Response hUserLogin(const QJsonObject &p, Session &s, QSqlDatabase db)
 {
     const QString phone = p.value(QStringLiteral("phone")).toString();
-    static const QRegularExpression phoneRe(QStringLiteral("^1[0-9]{10}$"));
-    if (!phoneRe.match(phone).hasMatch())
+    if (!validPhone(phone))
         return fail(2001, QStringLiteral("invalid phone"));
+    const bool byPassword = p.value(QStringLiteral("password")).isString();
+    const bool byCode = p.value(QStringLiteral("code")).isString();
+    if (byPassword == byCode)
+        return fail(2001, QStringLiteral("provide either password or code"));
 
     QSqlQuery q(db);
     q.prepare(QString::fromLatin1(Protocol::kUserSelect)
@@ -89,7 +170,25 @@ Response hUserLogin(const QJsonObject &p, Session &s, QSqlDatabase db)
     q.addBindValue(phone);
     if (!exec(q))
         return fail(5000, QStringLiteral("internal error"));
-    if (!q.next()) {
+    const bool found = q.next();
+    if (found && q.value(9).toInt() != 0)
+        return fail(1005, QStringLiteral("account deleted"));
+    if (found && q.value(4).toString() == QLatin1String("frozen"))
+        return fail(1002, QStringLiteral("account frozen"));
+    if (byCode) {
+        const CodeCheck check = consumeSmsCode(db, phone,
+                                               p.value(QStringLiteral("code")).toString());
+        if (check == CodeCheck::DbError)
+            return fail(5000, QStringLiteral("internal error"));
+        if (check == CodeCheck::Mismatch)
+            return fail(1001, QStringLiteral("invalid or expired code"));
+    } else if (found) {
+        if (q.value(8).isNull()
+            || !Protocol::verifyPassword(q.value(8).toString(),
+                                         p.value(QStringLiteral("password")).toString()))
+            return fail(1001, QStringLiteral("invalid credentials"));
+    }
+    if (!found) {
         QSqlQuery ins(db);
         ins.prepare(QStringLiteral("INSERT INTO users (phone, nickname, balanceFen, status, regTime)"
                                    " VALUES (?, ?, 0, 'normal', ?)"));
@@ -109,6 +208,102 @@ Response hUserLogin(const QJsonObject &p, Session &s, QSqlDatabase db)
     return finishUserLogin(q, s, false);
 }
 
+Response hCodeRequest(const QJsonObject &p, Session &, QSqlDatabase db)
+{
+    const QString phone = p.value(QStringLiteral("phone")).toString();
+    if (!validPhone(phone))
+        return fail(2001, QStringLiteral("invalid phone"));
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral("SELECT deleted FROM users WHERE phone = ?"));
+    q.addBindValue(phone);
+    if (!exec(q))
+        return fail(5000, QStringLiteral("internal error"));
+    if (q.next() && q.value(0).toInt() != 0)
+        return fail(1005, QStringLiteral("account deleted"));
+    const QString code = QStringLiteral("%1")
+        .arg(QRandomGenerator::global()->bounded(1000000), 6, 10, QLatin1Char('0'));
+    QSqlQuery up(db);
+    up.prepare(QStringLiteral("INSERT OR REPLACE INTO codes (phone, code, expiresAtEpoch)"
+                              " VALUES (?, ?, ?)"));
+    up.addBindValue(phone);
+    up.addBindValue(code);
+    up.addBindValue(TimeUtil::nowSecs() + 300);
+    if (!exec(up))
+        return fail(5000, QStringLiteral("internal error"));
+    QJsonObject data;
+    data.insert(QStringLiteral("code"), code);
+    data.insert(QStringLiteral("validSec"), 300);
+    return ok(data);
+}
+
+Response hPasswordReset(const QJsonObject &p, Session &, QSqlDatabase db)
+{
+    const QString phone = p.value(QStringLiteral("phone")).toString();
+    if (!validPhone(phone))
+        return fail(2001, QStringLiteral("invalid phone"));
+    if (!p.value(QStringLiteral("code")).isString())
+        return fail(2001, QStringLiteral("invalid code"));
+    const QString code = p.value(QStringLiteral("code")).toString();
+    if (!p.value(QStringLiteral("newPassword")).isString()
+        || !Protocol::isValidPassword(p.value(QStringLiteral("newPassword")).toString()))
+        return fail(2001, QStringLiteral("invalid newPassword"));
+    const QString newPassword = p.value(QStringLiteral("newPassword")).toString();
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral("SELECT userId, deleted FROM users WHERE phone = ?"));
+    q.addBindValue(phone);
+    if (!exec(q))
+        return fail(5000, QStringLiteral("internal error"));
+    if (!q.next())
+        return fail(2002, QStringLiteral("user not found"));
+    if (q.value(1).toInt() != 0)
+        return fail(1005, QStringLiteral("account deleted"));
+    const CodeCheck check = consumeSmsCode(db, phone, code);
+    if (check == CodeCheck::DbError)
+        return fail(5000, QStringLiteral("internal error"));
+    if (check == CodeCheck::Mismatch)
+        return fail(1001, QStringLiteral("invalid or expired code"));
+    QSqlQuery upd(db);
+    upd.prepare(QStringLiteral("UPDATE users SET passwordHash = ? WHERE userId = ?"));
+    upd.addBindValue(Protocol::passwordRecord(newPassword));
+    upd.addBindValue(q.value(0).toLongLong());
+    if (!exec(upd))
+        return fail(5000, QStringLiteral("internal error"));
+    QJsonObject data;
+    data.insert(QStringLiteral("phone"), phone);
+    return ok(data);
+}
+
+Response hUserPasswordUpdate(const QJsonObject &p, Session &s, QSqlDatabase db)
+{
+    if (!p.value(QStringLiteral("newPassword")).isString()
+        || !Protocol::isValidPassword(p.value(QStringLiteral("newPassword")).toString()))
+        return fail(2001, QStringLiteral("invalid newPassword"));
+    const QString newPassword = p.value(QStringLiteral("newPassword")).toString();
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral("SELECT passwordHash FROM users WHERE userId = ?"));
+    q.addBindValue(s.userId);
+    if (!exec(q) || !q.next())
+        return fail(5000, QStringLiteral("internal error"));
+    if (!q.value(0).isNull()) {
+        const QString record = q.value(0).toString();
+        const QString oldPassword = p.value(QStringLiteral("oldPassword")).toString();
+        if (!p.value(QStringLiteral("oldPassword")).isString()
+            || !Protocol::verifyPassword(record, oldPassword))
+            return fail(1001, QStringLiteral("invalid old password"));
+        if (Protocol::verifyPassword(record, newPassword))
+            return fail(2001, QStringLiteral("new password must differ from old"));
+    }
+    QSqlQuery upd(db);
+    upd.prepare(QStringLiteral("UPDATE users SET passwordHash = ? WHERE userId = ?"));
+    upd.addBindValue(Protocol::passwordRecord(newPassword));
+    upd.addBindValue(s.userId);
+    if (!exec(upd))
+        return fail(5000, QStringLiteral("internal error"));
+    QJsonObject data;
+    data.insert(QStringLiteral("hasPassword"), true);
+    return ok(data);
+}
+
 Response hAdminLogin(const QJsonObject &p, Session &s, QSqlDatabase db)
 {
     if (!p.value(QStringLiteral("username")).isString()
@@ -121,21 +316,40 @@ Response hAdminLogin(const QJsonObject &p, Session &s, QSqlDatabase db)
     q.addBindValue(username);
     if (!exec(q))
         return fail(5000, QStringLiteral("internal error"));
-    if (!q.next())
-        return fail(1001, QStringLiteral("invalid credentials"));
-    const QString stored = q.value(1).toString();
-    const int sep = stored.indexOf(QLatin1Char(':'));
-    const QByteArray saltHex = sep > 0 ? stored.left(sep).toLatin1() : QByteArray();
-    const QByteArray expected = sep > 0 ? stored.mid(sep + 1).toLatin1() : QByteArray();
-    const QByteArray actual = QCryptographicHash::hash(saltHex + password.toUtf8(),
-                                                       QCryptographicHash::Sha256).toHex();
-    if (actual != expected)
+    if (!q.next() || !Protocol::verifyPassword(q.value(1).toString(), password))
         return fail(1001, QStringLiteral("invalid credentials"));
     s.role = Session::Admin;
     s.adminId = q.value(0).toLongLong();
     QJsonObject data;
     data.insert(QStringLiteral("adminId"), s.adminId);
     data.insert(QStringLiteral("username"), username);
+    return ok(data);
+}
+
+Response hAdminPasswordUpdate(const QJsonObject &p, Session &s, QSqlDatabase db)
+{
+    if (!p.value(QStringLiteral("oldPassword")).isString()
+        || !p.value(QStringLiteral("newPassword")).isString())
+        return fail(2001, QStringLiteral("invalid params"));
+    const QString oldPassword = p.value(QStringLiteral("oldPassword")).toString();
+    const QString newPassword = p.value(QStringLiteral("newPassword")).toString();
+    if (!Protocol::isValidPassword(newPassword))
+        return fail(2001, QStringLiteral("invalid newPassword"));
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral("SELECT passwordHash FROM admins WHERE adminId = ?"));
+    q.addBindValue(s.adminId);
+    if (!exec(q) || !q.next())
+        return fail(5000, QStringLiteral("internal error"));
+    if (!Protocol::verifyPassword(q.value(0).toString(), oldPassword))
+        return fail(1001, QStringLiteral("invalid old password"));
+    QSqlQuery upd(db);
+    upd.prepare(QStringLiteral("UPDATE admins SET passwordHash = ? WHERE adminId = ?"));
+    upd.addBindValue(Protocol::passwordRecord(newPassword));
+    upd.addBindValue(s.adminId);
+    if (!exec(upd))
+        return fail(5000, QStringLiteral("internal error"));
+    QJsonObject data;
+    data.insert(QStringLiteral("adminId"), s.adminId);
     return ok(data);
 }
 
@@ -287,7 +501,7 @@ Response hStationDetail(const QJsonObject &p, Session &, QSqlDatabase db)
         return fail(2001, QStringLiteral("invalid stationId"));
     QSqlQuery q(db);
     q.prepare(QString::fromLatin1(Protocol::kStationAggregateSelect)
-              + QStringLiteral(" WHERE s.stationId = ? GROUP BY s.stationId"));
+              + QStringLiteral(" WHERE s.stationId = ? AND s.deleted = 0 GROUP BY s.stationId"));
     q.addBindValue(stationId);
     if (!exec(q))
         return fail(5000, QStringLiteral("internal error"));
@@ -296,7 +510,7 @@ Response hStationDetail(const QJsonObject &p, Session &, QSqlDatabase db)
     const QJsonObject station = Protocol::stationSummaryJson(q);
     QSqlQuery piles(db);
     piles.prepare(QString::fromLatin1(Protocol::kPileSelect)
-                  + QStringLiteral(" WHERE p.stationId = ? ORDER BY p.code"));
+                  + QStringLiteral(" WHERE p.stationId = ? AND p.deleted = 0 ORDER BY p.code"));
     piles.addBindValue(stationId);
     if (!exec(piles))
         return fail(5000, QStringLiteral("internal error"));
@@ -349,7 +563,7 @@ Response hReserve(const QJsonObject &p, Session &s, QSqlDatabase db)
     QSqlQuery pq(db);
     pq.prepare(QStringLiteral("SELECT p.status, p.stationId, s.priceFenPerKwh"
                               " FROM piles p JOIN stations s ON s.stationId = p.stationId"
-                              " WHERE p.pileId = ?"));
+                              " WHERE p.pileId = ? AND p.deleted = 0"));
     pq.addBindValue(pileId);
     if (!exec(pq)) {
         db.rollback();
@@ -639,7 +853,7 @@ Response hPileList(const QJsonObject &p, Session &, QSqlDatabase db)
             return fail(2001, QStringLiteral("invalid status"));
     }
     QString sql = QString::fromLatin1(Protocol::kPileSelect)
-        + QStringLiteral(" WHERE 1 = 1");
+        + QStringLiteral(" WHERE p.deleted = 0");
     if (stationId > 0)
         sql += QStringLiteral(" AND p.stationId = ?");
     if (!status.isEmpty())
@@ -667,7 +881,7 @@ Response hPileRestart(const QJsonObject &p, Session &, QSqlDatabase db)
     if (!Protocol::readInt(p, QStringLiteral("pileId"), 1, kMaxId, pileId))
         return fail(2001, QStringLiteral("invalid pileId"));
     QSqlQuery q(db);
-    q.prepare(QStringLiteral("SELECT status FROM piles WHERE pileId = ?"));
+    q.prepare(QStringLiteral("SELECT status FROM piles WHERE pileId = ? AND deleted = 0"));
     q.addBindValue(pileId);
     if (!exec(q))
         return fail(5000, QStringLiteral("internal error"));
@@ -694,10 +908,186 @@ Response hPileRestart(const QJsonObject &p, Session &, QSqlDatabase db)
     return ok(data);
 }
 
-Response hStationList(const QJsonObject &, Session &, QSqlDatabase db)
+Response hPileAdd(const QJsonObject &p, Session &, QSqlDatabase db)
 {
+    qint64 stationId = 0;
+    if (!Protocol::readInt(p, QStringLiteral("stationId"), 1, kMaxId, stationId))
+        return fail(2001, QStringLiteral("invalid stationId"));
+    if (!p.value(QStringLiteral("code")).isString())
+        return fail(2001, QStringLiteral("invalid code"));
+    const QString code = p.value(QStringLiteral("code")).toString().trimmed();
+    if (code.isEmpty() || code.length() > 20)
+        return fail(2001, QStringLiteral("invalid code"));
+    if (!p.value(QStringLiteral("type")).isString()
+        || !validPileType(p.value(QStringLiteral("type")).toString()))
+        return fail(2001, QStringLiteral("invalid type"));
+    const QString type = p.value(QStringLiteral("type")).toString();
+    double powerKw = 0.0;
+    if (!readPowerKw(p, powerKw))
+        return fail(2001, QStringLiteral("invalid powerKw"));
+    QSqlQuery station(db);
+    station.prepare(QStringLiteral("SELECT stationId FROM stations WHERE stationId = ? AND deleted = 0"));
+    station.addBindValue(stationId);
+    if (!exec(station))
+        return fail(5000, QStringLiteral("internal error"));
+    if (!station.next())
+        return fail(2002, QStringLiteral("station not found"));
+    QSqlQuery dup(db);
+    dup.prepare(QStringLiteral("SELECT COUNT(*) FROM piles WHERE code = ?"));
+    dup.addBindValue(code);
+    if (!exec(dup) || !dup.next())
+        return fail(5000, QStringLiteral("internal error"));
+    if (dup.value(0).toLongLong() > 0)
+        return fail(2001, QStringLiteral("code already exists"));
+    QSqlQuery ins(db);
+    ins.prepare(QStringLiteral("INSERT INTO piles (code, stationId, type, powerKw, status)"
+                               " VALUES (?, ?, ?, ?, 'idle')"));
+    ins.addBindValue(code);
+    ins.addBindValue(stationId);
+    ins.addBindValue(type);
+    ins.addBindValue(powerKw);
+    if (!exec(ins))
+        return fail(5000, QStringLiteral("internal error"));
+    QSqlQuery q(db);
+    q.prepare(QString::fromLatin1(Protocol::kPileSelect)
+              + QStringLiteral(" WHERE p.pileId = ?"));
+    q.addBindValue(ins.lastInsertId().toLongLong());
+    if (!exec(q) || !q.next())
+        return fail(5000, QStringLiteral("internal error"));
     QJsonObject data;
-    data.insert(QStringLiteral("stations"), Stats::stationSummaries(db));
+    data.insert(QStringLiteral("pile"), Protocol::pileJson(q));
+    return ok(data);
+}
+
+Response hPileUpdate(const QJsonObject &p, Session &, QSqlDatabase db)
+{
+    qint64 pileId = 0;
+    if (!Protocol::readInt(p, QStringLiteral("pileId"), 1, kMaxId, pileId))
+        return fail(2001, QStringLiteral("invalid pileId"));
+    const bool hasType = p.contains(QStringLiteral("type"));
+    const bool hasPower = p.contains(QStringLiteral("powerKw"));
+    if (!hasType && !hasPower)
+        return fail(2001, QStringLiteral("nothing to update"));
+    QString type;
+    double powerKw = 0.0;
+    if (hasType) {
+        if (!p.value(QStringLiteral("type")).isString()
+            || !validPileType(p.value(QStringLiteral("type")).toString()))
+            return fail(2001, QStringLiteral("invalid type"));
+        type = p.value(QStringLiteral("type")).toString();
+    }
+    if (hasPower && !readPowerKw(p, powerKw))
+        return fail(2001, QStringLiteral("invalid powerKw"));
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral("SELECT status, deleted FROM piles WHERE pileId = ?"));
+    q.addBindValue(pileId);
+    if (!exec(q))
+        return fail(5000, QStringLiteral("internal error"));
+    if (!q.next() || q.value(1).toInt() != 0)
+        return fail(2002, QStringLiteral("pile not found"));
+    if (q.value(0).toString() == QLatin1String("in_use"))
+        return fail(3002, QStringLiteral("pile has unfinished order"));
+    QSqlQuery upd(db);
+    if (hasType && hasPower) {
+        upd.prepare(QStringLiteral("UPDATE piles SET type = ?, powerKw = ? WHERE pileId = ?"));
+        upd.addBindValue(type);
+        upd.addBindValue(powerKw);
+    } else if (hasType) {
+        upd.prepare(QStringLiteral("UPDATE piles SET type = ? WHERE pileId = ?"));
+        upd.addBindValue(type);
+    } else {
+        upd.prepare(QStringLiteral("UPDATE piles SET powerKw = ? WHERE pileId = ?"));
+        upd.addBindValue(powerKw);
+    }
+    upd.addBindValue(pileId);
+    if (!exec(upd))
+        return fail(5000, QStringLiteral("internal error"));
+    QSqlQuery fresh(db);
+    fresh.prepare(QString::fromLatin1(Protocol::kPileSelect)
+                  + QStringLiteral(" WHERE p.pileId = ?"));
+    fresh.addBindValue(pileId);
+    if (!exec(fresh) || !fresh.next())
+        return fail(5000, QStringLiteral("internal error"));
+    QJsonObject data;
+    data.insert(QStringLiteral("pile"), Protocol::pileJson(fresh));
+    return ok(data);
+}
+
+Response hPileDelete(const QJsonObject &p, Session &, QSqlDatabase db)
+{
+    qint64 pileId = 0;
+    if (!Protocol::readInt(p, QStringLiteral("pileId"), 1, kMaxId, pileId))
+        return fail(2001, QStringLiteral("invalid pileId"));
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral("SELECT status, deleted FROM piles WHERE pileId = ?"));
+    q.addBindValue(pileId);
+    if (!exec(q))
+        return fail(5000, QStringLiteral("internal error"));
+    if (!q.next() || q.value(1).toInt() != 0)
+        return fail(2002, QStringLiteral("pile not found"));
+    if (q.value(0).toString() != QLatin1String("idle"))
+        return fail(3002, QStringLiteral("pile is not idle"));
+    QSqlQuery active(db);
+    active.prepare(QStringLiteral("SELECT COUNT(*) FROM orders WHERE pileId = ? AND status IN ")
+                   + QLatin1String(kUnfinishedOrders));
+    active.addBindValue(pileId);
+    if (!exec(active) || !active.next())
+        return fail(5000, QStringLiteral("internal error"));
+    if (active.value(0).toLongLong() > 0)
+        return fail(3002, QStringLiteral("pile has unfinished order"));
+    QSqlQuery upd(db);
+    upd.prepare(QStringLiteral("UPDATE piles SET deleted = 1 WHERE pileId = ?"));
+    upd.addBindValue(pileId);
+    if (!exec(upd))
+        return fail(5000, QStringLiteral("internal error"));
+    QJsonObject data;
+    data.insert(QStringLiteral("pileId"), pileId);
+    data.insert(QStringLiteral("deleted"), true);
+    return ok(data);
+}
+
+Response hStationList(const QJsonObject &p, Session &, QSqlDatabase db)
+{
+    qint64 page = 1, pageSize = 20;
+    if (p.contains(QStringLiteral("page"))
+        && !Protocol::readInt(p, QStringLiteral("page"), 1, kMaxId, page))
+        return fail(2001, QStringLiteral("invalid page"));
+    if (p.contains(QStringLiteral("pageSize"))
+        && !Protocol::readInt(p, QStringLiteral("pageSize"), 1, 100, pageSize))
+        return fail(2001, QStringLiteral("invalid pageSize"));
+    QString keyword;
+    if (p.contains(QStringLiteral("nameKeyword"))) {
+        if (!p.value(QStringLiteral("nameKeyword")).isString())
+            return fail(2001, QStringLiteral("invalid nameKeyword"));
+        keyword = p.value(QStringLiteral("nameKeyword")).toString();
+    }
+    QString where = QStringLiteral(" WHERE s.deleted = 0");
+    if (!keyword.isEmpty())
+        where += QStringLiteral(" AND s.name LIKE ?");
+    QSqlQuery count(db);
+    count.prepare(QStringLiteral("SELECT COUNT(*) FROM stations s") + where);
+    if (!keyword.isEmpty())
+        count.addBindValue(QLatin1Char('%') + keyword + QLatin1Char('%'));
+    if (!exec(count) || !count.next())
+        return fail(5000, QStringLiteral("internal error"));
+    const qint64 total = count.value(0).toLongLong();
+    QSqlQuery q(db);
+    q.prepare(QString::fromLatin1(Protocol::kStationAggregateSelect) + where
+              + QStringLiteral(" GROUP BY s.stationId ORDER BY s.stationId LIMIT ? OFFSET ?"));
+    if (!keyword.isEmpty())
+        q.addBindValue(QLatin1Char('%') + keyword + QLatin1Char('%'));
+    q.addBindValue(pageSize);
+    q.addBindValue((page - 1) * pageSize);
+    if (!exec(q))
+        return fail(5000, QStringLiteral("internal error"));
+    QJsonArray stations;
+    while (q.next())
+        stations.append(Protocol::stationSummaryJson(q));
+    QJsonObject data;
+    data.insert(QStringLiteral("page"), page);
+    data.insert(QStringLiteral("pageSize"), pageSize);
+    data.insert(QStringLiteral("total"), total);
+    data.insert(QStringLiteral("stations"), stations);
     return ok(data);
 }
 
@@ -782,6 +1172,121 @@ Response hStationAdd(const QJsonObject &p, Session &, QSqlDatabase db)
     return ok(data);
 }
 
+Response hStationUpdate(const QJsonObject &p, Session &, QSqlDatabase db)
+{
+    qint64 stationId = 0;
+    if (!Protocol::readInt(p, QStringLiteral("stationId"), 1, kMaxId, stationId))
+        return fail(2001, QStringLiteral("invalid stationId"));
+    const bool hasName = p.contains(QStringLiteral("name"));
+    const bool hasAddress = p.contains(QStringLiteral("address"));
+    const bool hasPrice = p.contains(QStringLiteral("pricePerKwh"));
+    if (!hasName && !hasAddress && !hasPrice)
+        return fail(2001, QStringLiteral("nothing to update"));
+    QString name, address;
+    qint64 priceFen = 0;
+    if (hasName) {
+        if (!p.value(QStringLiteral("name")).isString())
+            return fail(2001, QStringLiteral("invalid name"));
+        name = p.value(QStringLiteral("name")).toString().trimmed();
+        if (name.isEmpty())
+            return fail(2001, QStringLiteral("invalid name"));
+    }
+    if (hasAddress) {
+        if (!p.value(QStringLiteral("address")).isString())
+            return fail(2001, QStringLiteral("invalid address"));
+        address = p.value(QStringLiteral("address")).toString().trimmed();
+        if (address.isEmpty())
+            return fail(2001, QStringLiteral("invalid address"));
+    }
+    if (hasPrice
+        && !Protocol::readMoneyFen(p, QStringLiteral("pricePerKwh"), kMaxPriceFen, priceFen))
+        return fail(2001, QStringLiteral("invalid pricePerKwh"));
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral("SELECT deleted FROM stations WHERE stationId = ?"));
+    q.addBindValue(stationId);
+    if (!exec(q))
+        return fail(5000, QStringLiteral("internal error"));
+    if (!q.next() || q.value(0).toInt() != 0)
+        return fail(2002, QStringLiteral("station not found"));
+    QStringList sets;
+    QVariantList binds;
+    if (hasName) {
+        sets.append(QStringLiteral("name = ?"));
+        binds.append(name);
+    }
+    if (hasAddress) {
+        sets.append(QStringLiteral("address = ?"));
+        binds.append(address);
+    }
+    if (hasPrice) {
+        sets.append(QStringLiteral("priceFenPerKwh = ?"));
+        binds.append(priceFen);
+    }
+    // lng/lat are intentionally not updatable; submitted values are ignored.
+    QSqlQuery upd(db);
+    upd.prepare(QStringLiteral("UPDATE stations SET ") + sets.join(QStringLiteral(", "))
+                + QStringLiteral(" WHERE stationId = ?"));
+    for (const QVariant &bind : binds)
+        upd.addBindValue(bind);
+    upd.addBindValue(stationId);
+    if (!exec(upd))
+        return fail(5000, QStringLiteral("internal error"));
+    QSqlQuery fresh(db);
+    fresh.prepare(QString::fromLatin1(Protocol::kStationAggregateSelect)
+                  + QStringLiteral(" WHERE s.stationId = ? GROUP BY s.stationId"));
+    fresh.addBindValue(stationId);
+    if (!exec(fresh) || !fresh.next())
+        return fail(5000, QStringLiteral("internal error"));
+    QJsonObject data;
+    data.insert(QStringLiteral("station"), Protocol::stationSummaryJson(fresh));
+    return ok(data);
+}
+
+Response hStationDelete(const QJsonObject &p, Session &, QSqlDatabase db)
+{
+    qint64 stationId = 0;
+    if (!Protocol::readInt(p, QStringLiteral("stationId"), 1, kMaxId, stationId))
+        return fail(2001, QStringLiteral("invalid stationId"));
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral("SELECT deleted FROM stations WHERE stationId = ?"));
+    q.addBindValue(stationId);
+    if (!exec(q))
+        return fail(5000, QStringLiteral("internal error"));
+    if (!q.next() || q.value(0).toInt() != 0)
+        return fail(2002, QStringLiteral("station not found"));
+    QSqlQuery active(db);
+    active.prepare(QStringLiteral("SELECT COUNT(*) FROM orders o"
+                                  " JOIN piles p ON p.pileId = o.pileId"
+                                  " WHERE p.stationId = ? AND o.status IN ")
+                   + QLatin1String(kUnfinishedOrders));
+    active.addBindValue(stationId);
+    if (!exec(active) || !active.next())
+        return fail(5000, QStringLiteral("internal error"));
+    if (active.value(0).toLongLong() > 0)
+        return fail(3002, QStringLiteral("station has piles with unfinished orders"));
+    if (!db.transaction())
+        return fail(5000, QStringLiteral("internal error"));
+    QSqlQuery delStation(db);
+    delStation.prepare(QStringLiteral("UPDATE stations SET deleted = 1 WHERE stationId = ?"));
+    delStation.addBindValue(stationId);
+    QSqlQuery delPiles(db);
+    delPiles.prepare(QStringLiteral("UPDATE piles SET deleted = 1"
+                                    " WHERE stationId = ? AND deleted = 0"));
+    delPiles.addBindValue(stationId);
+    if (!exec(delStation) || !exec(delPiles)) {
+        db.rollback();
+        return fail(5000, QStringLiteral("internal error"));
+    }
+    const qint64 removedPileCount = delPiles.numRowsAffected();
+    if (!db.commit())
+        return fail(5000, QStringLiteral("internal error"));
+    QJsonObject data;
+    data.insert(QStringLiteral("stationId"), stationId);
+    data.insert(QStringLiteral("deleted"), true);
+    data.insert(QStringLiteral("removedPileCount"), removedPileCount);
+    return ok(data);
+}
+
 Response hUserList(const QJsonObject &p, Session &, QSqlDatabase db)
 {
     QString keyword;
@@ -794,8 +1299,9 @@ Response hUserList(const QJsonObject &p, Session &, QSqlDatabase db)
             return fail(2001, QStringLiteral("invalid phoneKeyword"));
     }
     QString sql = QString::fromLatin1(Protocol::kUserSelect);
+    sql += QStringLiteral(" WHERE deleted = 0");
     if (!keyword.isEmpty())
-        sql += QStringLiteral(" WHERE phone LIKE ?");
+        sql += QStringLiteral(" AND phone LIKE ?");
     sql += QStringLiteral(" ORDER BY userId");
     QSqlQuery q(db);
     q.prepare(sql);
@@ -822,7 +1328,7 @@ Response hUserSetStatus(const QJsonObject &p, Session &, QSqlDatabase db)
     if (status != QLatin1String("frozen") && status != QLatin1String("normal"))
         return fail(2001, QStringLiteral("invalid status"));
     QSqlQuery q(db);
-    q.prepare(QStringLiteral("SELECT userId FROM users WHERE userId = ?"));
+    q.prepare(QStringLiteral("SELECT userId FROM users WHERE userId = ? AND deleted = 0"));
     q.addBindValue(userId);
     if (!exec(q))
         return fail(5000, QStringLiteral("internal error"));
@@ -850,6 +1356,301 @@ Response hUserSetStatus(const QJsonObject &p, Session &, QSqlDatabase db)
     return ok(data);
 }
 
+Response userSummaryResponse(QSqlDatabase db, qint64 userId)
+{
+    QSqlQuery q(db);
+    q.prepare(QString::fromLatin1(Protocol::kUserSelect)
+              + QStringLiteral(" WHERE userId = ?"));
+    q.addBindValue(userId);
+    if (!exec(q) || !q.next())
+        return fail(5000, QStringLiteral("internal error"));
+    QJsonObject data;
+    data.insert(QStringLiteral("user"), Protocol::userJson(q, false));
+    return ok(data);
+}
+
+Response hUserAdd(const QJsonObject &p, Session &, QSqlDatabase db)
+{
+    if (!p.value(QStringLiteral("phone")).isString())
+        return fail(2001, QStringLiteral("invalid phone"));
+    const QString phone = p.value(QStringLiteral("phone")).toString();
+    if (!validPhone(phone))
+        return fail(2001, QStringLiteral("invalid phone"));
+    QString nickname = QStringLiteral("用户") + phone.right(4);
+    if (p.contains(QStringLiteral("nickname"))) {
+        if (!p.value(QStringLiteral("nickname")).isString())
+            return fail(2001, QStringLiteral("invalid nickname"));
+        nickname = p.value(QStringLiteral("nickname")).toString().trimmed();
+        if (nickname.isEmpty() || nickname.length() > 20)
+            return fail(2001, QStringLiteral("invalid nickname"));
+    }
+    QString password = kInitialPassword;
+    if (p.contains(QStringLiteral("password"))) {
+        if (!p.value(QStringLiteral("password")).isString()
+            || !Protocol::isValidPassword(p.value(QStringLiteral("password")).toString()))
+            return fail(2001, QStringLiteral("invalid password"));
+        password = p.value(QStringLiteral("password")).toString();
+    }
+    QSqlQuery dup(db);
+    dup.prepare(QStringLiteral("SELECT COUNT(*) FROM users WHERE phone = ?"));
+    dup.addBindValue(phone);
+    if (!exec(dup) || !dup.next())
+        return fail(5000, QStringLiteral("internal error"));
+    if (dup.value(0).toLongLong() > 0)
+        return fail(2001, QStringLiteral("phone already exists"));
+    QSqlQuery ins(db);
+    ins.prepare(QStringLiteral("INSERT INTO users (phone, nickname, balanceFen, status,"
+                               " passwordHash, regTime) VALUES (?, ?, 0, 'normal', ?, ?)"));
+    ins.addBindValue(phone);
+    ins.addBindValue(nickname);
+    ins.addBindValue(Protocol::passwordRecord(password));
+    ins.addBindValue(TimeUtil::nowSecs());
+    if (!exec(ins))
+        return fail(5000, QStringLiteral("internal error"));
+    return userSummaryResponse(db, ins.lastInsertId().toLongLong());
+}
+
+Response hUserUpdate(const QJsonObject &p, Session &, QSqlDatabase db)
+{
+    qint64 userId = 0;
+    if (!Protocol::readInt(p, QStringLiteral("userId"), 1, kMaxId, userId))
+        return fail(2001, QStringLiteral("invalid userId"));
+    const bool hasPhone = p.contains(QStringLiteral("phone"));
+    const bool hasNick = p.contains(QStringLiteral("nickname"));
+    if (!hasPhone && !hasNick)
+        return fail(2001, QStringLiteral("nothing to update"));
+    QString phone, nickname;
+    if (hasPhone) {
+        if (!p.value(QStringLiteral("phone")).isString())
+            return fail(2001, QStringLiteral("invalid phone"));
+        phone = p.value(QStringLiteral("phone")).toString();
+        if (!validPhone(phone))
+            return fail(2001, QStringLiteral("invalid phone"));
+    }
+    if (hasNick) {
+        if (!p.value(QStringLiteral("nickname")).isString())
+            return fail(2001, QStringLiteral("invalid nickname"));
+        nickname = p.value(QStringLiteral("nickname")).toString().trimmed();
+        if (nickname.isEmpty() || nickname.length() > 20)
+            return fail(2001, QStringLiteral("invalid nickname"));
+    }
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral("SELECT deleted FROM users WHERE userId = ?"));
+    q.addBindValue(userId);
+    if (!exec(q))
+        return fail(5000, QStringLiteral("internal error"));
+    if (!q.next() || q.value(0).toInt() != 0)
+        return fail(2002, QStringLiteral("user not found"));
+    if (hasPhone) {
+        QSqlQuery dup(db);
+        dup.prepare(QStringLiteral("SELECT COUNT(*) FROM users WHERE phone = ? AND userId != ?"));
+        dup.addBindValue(phone);
+        dup.addBindValue(userId);
+        if (!exec(dup) || !dup.next())
+            return fail(5000, QStringLiteral("internal error"));
+        if (dup.value(0).toLongLong() > 0)
+            return fail(2001, QStringLiteral("phone already exists"));
+    }
+    QSqlQuery upd(db);
+    if (hasPhone && hasNick) {
+        upd.prepare(QStringLiteral("UPDATE users SET phone = ?, nickname = ? WHERE userId = ?"));
+        upd.addBindValue(phone);
+        upd.addBindValue(nickname);
+    } else if (hasPhone) {
+        upd.prepare(QStringLiteral("UPDATE users SET phone = ? WHERE userId = ?"));
+        upd.addBindValue(phone);
+    } else {
+        upd.prepare(QStringLiteral("UPDATE users SET nickname = ? WHERE userId = ?"));
+        upd.addBindValue(nickname);
+    }
+    upd.addBindValue(userId);
+    if (!exec(upd))
+        return fail(5000, QStringLiteral("internal error"));
+    return userSummaryResponse(db, userId);
+}
+
+Response hUserResetPassword(const QJsonObject &p, Session &, QSqlDatabase db)
+{
+    qint64 userId = 0;
+    if (!Protocol::readInt(p, QStringLiteral("userId"), 1, kMaxId, userId))
+        return fail(2001, QStringLiteral("invalid userId"));
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral("SELECT deleted FROM users WHERE userId = ?"));
+    q.addBindValue(userId);
+    if (!exec(q))
+        return fail(5000, QStringLiteral("internal error"));
+    if (!q.next() || q.value(0).toInt() != 0)
+        return fail(2002, QStringLiteral("user not found"));
+    QSqlQuery upd(db);
+    upd.prepare(QStringLiteral("UPDATE users SET passwordHash = ? WHERE userId = ?"));
+    upd.addBindValue(Protocol::passwordRecord(kInitialPassword));
+    upd.addBindValue(userId);
+    if (!exec(upd))
+        return fail(5000, QStringLiteral("internal error"));
+    QJsonObject data;
+    data.insert(QStringLiteral("userId"), userId);
+    data.insert(QStringLiteral("password"), kInitialPassword);
+    return ok(data);
+}
+
+Response hUserDelete(const QJsonObject &p, Session &, QSqlDatabase db)
+{
+    qint64 userId = 0;
+    if (!Protocol::readInt(p, QStringLiteral("userId"), 1, kMaxId, userId))
+        return fail(2001, QStringLiteral("invalid userId"));
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral("SELECT deleted FROM users WHERE userId = ?"));
+    q.addBindValue(userId);
+    if (!exec(q))
+        return fail(5000, QStringLiteral("internal error"));
+    if (!q.next() || q.value(0).toInt() != 0)
+        return fail(2002, QStringLiteral("user not found"));
+    QSqlQuery active(db);
+    active.prepare(QStringLiteral("SELECT COUNT(*) FROM orders WHERE userId = ? AND status IN ")
+                   + QLatin1String(kUnfinishedOrders));
+    active.addBindValue(userId);
+    if (!exec(active) || !active.next())
+        return fail(5000, QStringLiteral("internal error"));
+    if (active.value(0).toLongLong() > 0)
+        return fail(3002, QStringLiteral("user has unfinished orders"));
+    QSqlQuery upd(db);
+    upd.prepare(QStringLiteral("UPDATE users SET deleted = 1 WHERE userId = ?"));
+    upd.addBindValue(userId);
+    if (!exec(upd))
+        return fail(5000, QStringLiteral("internal error"));
+    QJsonObject data;
+    data.insert(QStringLiteral("userId"), userId);
+    data.insert(QStringLiteral("deleted"), true);
+    return ok(data);
+}
+
+Response hAdminOrderList(const QJsonObject &p, Session &, QSqlDatabase db)
+{
+    qint64 page = 1, pageSize = 20;
+    if (p.contains(QStringLiteral("page"))
+        && !Protocol::readInt(p, QStringLiteral("page"), 1, kMaxId, page))
+        return fail(2001, QStringLiteral("invalid page"));
+    if (p.contains(QStringLiteral("pageSize"))
+        && !Protocol::readInt(p, QStringLiteral("pageSize"), 1, 100, pageSize))
+        return fail(2001, QStringLiteral("invalid pageSize"));
+    QString keyword;
+    if (p.contains(QStringLiteral("phoneKeyword"))
+        && !p.value(QStringLiteral("phoneKeyword")).isNull()) {
+        if (!p.value(QStringLiteral("phoneKeyword")).isString())
+            return fail(2001, QStringLiteral("invalid phoneKeyword"));
+        keyword = p.value(QStringLiteral("phoneKeyword")).toString();
+        static const QRegularExpression digits(QStringLiteral("^[0-9]+$"));
+        if (!keyword.isEmpty() && !digits.match(keyword).hasMatch())
+            return fail(2001, QStringLiteral("invalid phoneKeyword"));
+    }
+    QString status;
+    if (p.contains(QStringLiteral("status")) && !p.value(QStringLiteral("status")).isNull()) {
+        if (!p.value(QStringLiteral("status")).isString()
+            || !validOrderStatus(p.value(QStringLiteral("status")).toString()))
+            return fail(2001, QStringLiteral("invalid status"));
+        status = p.value(QStringLiteral("status")).toString();
+    }
+    QDate dateFrom, dateTo;
+    bool hasFrom = false, hasTo = false;
+    if (!readDate(p, QStringLiteral("dateFrom"), dateFrom, hasFrom)
+        || !readDate(p, QStringLiteral("dateTo"), dateTo, hasTo))
+        return fail(2001, QStringLiteral("invalid date"));
+    if (hasFrom && hasTo && dateFrom > dateTo)
+        return fail(2001, QStringLiteral("dateFrom must not be after dateTo"));
+
+    QStringList conditions;
+    QVariantList binds;
+    if (!keyword.isEmpty()) {
+        conditions.append(QStringLiteral("u.phone LIKE ?"));
+        binds.append(QLatin1Char('%') + keyword + QLatin1Char('%'));
+    }
+    if (!status.isEmpty()) {
+        conditions.append(QStringLiteral("o.status = ?"));
+        binds.append(status);
+    }
+    if (hasFrom) {
+        conditions.append(QStringLiteral("o.reservedAt >= ?"));
+        binds.append(TimeUtil::dayStartSecs(dateFrom));
+    }
+    if (hasTo) {
+        conditions.append(QStringLiteral("o.reservedAt < ?"));
+        binds.append(TimeUtil::dayStartSecs(dateTo.addDays(1)));
+    }
+    QString where;
+    if (!conditions.isEmpty())
+        where = QStringLiteral(" WHERE ") + conditions.join(QStringLiteral(" AND "));
+
+    QSqlQuery count(db);
+    count.prepare(QStringLiteral("SELECT COUNT(*) FROM orders o"
+                                 " JOIN users u ON u.userId = o.userId") + where);
+    for (const QVariant &bind : binds)
+        count.addBindValue(bind);
+    if (!exec(count) || !count.next())
+        return fail(5000, QStringLiteral("internal error"));
+    const qint64 total = count.value(0).toLongLong();
+    QSqlQuery q(db);
+    q.prepare(QString::fromLatin1(Protocol::kAdminOrderSelect) + where
+              + QStringLiteral(" ORDER BY o.reservedAt DESC, o.orderId DESC LIMIT ? OFFSET ?"));
+    for (const QVariant &bind : binds)
+        q.addBindValue(bind);
+    q.addBindValue(pageSize);
+    q.addBindValue((page - 1) * pageSize);
+    if (!exec(q))
+        return fail(5000, QStringLiteral("internal error"));
+    QJsonArray orders;
+    while (q.next())
+        orders.append(Protocol::adminOrderJson(q));
+    QJsonObject data;
+    data.insert(QStringLiteral("page"), page);
+    data.insert(QStringLiteral("pageSize"), pageSize);
+    data.insert(QStringLiteral("total"), total);
+    data.insert(QStringLiteral("orders"), orders);
+    return ok(data);
+}
+
+Response hAdminOrderDetail(const QJsonObject &p, Session &, QSqlDatabase db)
+{
+    qint64 orderId = 0;
+    if (!Protocol::readInt(p, QStringLiteral("orderId"), 1, kMaxId, orderId))
+        return fail(2001, QStringLiteral("invalid orderId"));
+    QSqlQuery q(db);
+    q.prepare(QString::fromLatin1(Protocol::kAdminOrderSelect)
+              + QStringLiteral(" WHERE o.orderId = ?"));
+    q.addBindValue(orderId);
+    if (!exec(q))
+        return fail(5000, QStringLiteral("internal error"));
+    if (!q.next())
+        return fail(2002, QStringLiteral("order not found"));
+    const QJsonObject order = Protocol::adminOrderJson(q);
+    const qint64 userId = q.value(13).toLongLong();
+    const qint64 stationId = q.value(1).toLongLong();
+    const qint64 pileId = q.value(2).toLongLong();
+    QSqlQuery uq(db);
+    uq.prepare(QString::fromLatin1(Protocol::kUserSelect)
+               + QStringLiteral(" WHERE userId = ?"));
+    uq.addBindValue(userId);
+    if (!exec(uq) || !uq.next())
+        return fail(5000, QStringLiteral("internal error"));
+    QSqlQuery sq(db);
+    sq.prepare(QString::fromLatin1(Protocol::kStationAggregateSelect)
+               + QStringLiteral(" WHERE s.stationId = ? GROUP BY s.stationId"));
+    sq.addBindValue(stationId);
+    if (!exec(sq) || !sq.next())
+        return fail(5000, QStringLiteral("internal error"));
+    QSqlQuery pq(db);
+    pq.prepare(QString::fromLatin1(Protocol::kPileSelect)
+               + QStringLiteral(" WHERE p.pileId = ?"));
+    pq.addBindValue(pileId);
+    if (!exec(pq) || !pq.next())
+        return fail(5000, QStringLiteral("internal error"));
+    QJsonObject data;
+    data.insert(QStringLiteral("order"), order);
+    data.insert(QStringLiteral("user"), Protocol::userJson(uq, false));
+    data.insert(QStringLiteral("station"), Protocol::stationSummaryJson(sq));
+    data.insert(QStringLiteral("pile"), Protocol::pileJson(pq));
+    return ok(data);
+}
+
 using Handler = Response (*)(const QJsonObject &, Session &, QSqlDatabase );
 
 struct MessageDef {
@@ -862,9 +1663,12 @@ const QHash<QString, MessageDef> &messageTable()
     static const QHash<QString, MessageDef> table = {
         {QStringLiteral("ping"), {0, hPing}},
         {QStringLiteral("user_login"), {0, hUserLogin}},
+        {QStringLiteral("user_code_request"), {0, hCodeRequest}},
+        {QStringLiteral("user_password_reset"), {0, hPasswordReset}},
         {QStringLiteral("admin_login"), {0, hAdminLogin}},
         {QStringLiteral("user_profile_get"), {1, hProfileGet}},
         {QStringLiteral("user_profile_update"), {1, hProfileUpdate}},
+        {QStringLiteral("user_password_update"), {1, hUserPasswordUpdate}},
         {QStringLiteral("wallet_recharge"), {1, hRecharge}},
         {QStringLiteral("nearby_station_list"), {1, hNearby}},
         {QStringLiteral("station_detail"), {3, hStationDetail}},
@@ -875,15 +1679,27 @@ const QHash<QString, MessageDef> &messageTable()
         {QStringLiteral("charge_settle"), {1, hSettle}},
         {QStringLiteral("charge_cancel"), {1, hCancel}},
         {QStringLiteral("user_order_list"), {1, hOrderList}},
+        {QStringLiteral("admin_password_update"), {2, hAdminPasswordUpdate}},
         {QStringLiteral("revenue_summary"), {2, hRevenueSummary}},
         {QStringLiteral("revenue_trend"), {2, hRevenueTrend}},
         {QStringLiteral("pile_status_overview"), {2, hPileStatusOverview}},
         {QStringLiteral("pile_list"), {2, hPileList}},
         {QStringLiteral("pile_restart"), {2, hPileRestart}},
+        {QStringLiteral("pile_add"), {2, hPileAdd}},
+        {QStringLiteral("pile_update"), {2, hPileUpdate}},
+        {QStringLiteral("pile_delete"), {2, hPileDelete}},
         {QStringLiteral("station_list"), {2, hStationList}},
         {QStringLiteral("station_add"), {2, hStationAdd}},
+        {QStringLiteral("station_update"), {2, hStationUpdate}},
+        {QStringLiteral("station_delete"), {2, hStationDelete}},
         {QStringLiteral("user_list"), {2, hUserList}},
         {QStringLiteral("user_set_status"), {2, hUserSetStatus}},
+        {QStringLiteral("user_add"), {2, hUserAdd}},
+        {QStringLiteral("user_update"), {2, hUserUpdate}},
+        {QStringLiteral("user_reset_password"), {2, hUserResetPassword}},
+        {QStringLiteral("user_delete"), {2, hUserDelete}},
+        {QStringLiteral("admin_order_list"), {2, hAdminOrderList}},
+        {QStringLiteral("admin_order_detail"), {2, hAdminOrderDetail}},
     };
     return table;
 }
@@ -898,9 +1714,11 @@ Response Handlers::dispatch(const QString &type, const QJsonObject &payload, Ses
     if (it == messageTable().constEnd())
         return fail(3001, QStringLiteral("unknown type"));
     const MessageDef def = it.value();
-    const bool isLogin = type == QLatin1String("user_login")
-        || type == QLatin1String("admin_login");
-    if (isLogin) {
+    const bool isPreLogin = type == QLatin1String("user_login")
+        || type == QLatin1String("admin_login")
+        || type == QLatin1String("user_code_request")
+        || type == QLatin1String("user_password_reset");
+    if (isPreLogin) {
         if (session.role != Session::None)
             return fail(3002, QStringLiteral("already logged in"));
         return def.handler(payload, session, db);
@@ -914,10 +1732,13 @@ Response Handlers::dispatch(const QString &type, const QJsonObject &payload, Ses
             return fail(1004, QStringLiteral("permission denied"));
         if (session.role == Session::User) {
             QSqlQuery q(db);
-            q.prepare(QStringLiteral("SELECT status FROM users WHERE userId = ?"));
+            q.prepare(QStringLiteral("SELECT status, deleted FROM users WHERE userId = ?"));
             q.addBindValue(session.userId);
-            if (!exec(q) || !q.next()
-                || q.value(0).toString() == QLatin1String("frozen")) {
+            if (!exec(q) || !q.next() || q.value(1).toInt() != 0) {
+                closeConnection = true;
+                return fail(1005, QStringLiteral("account deleted"));
+            }
+            if (q.value(0).toString() == QLatin1String("frozen")) {
                 closeConnection = true;
                 return fail(1002, QStringLiteral("account frozen"));
             }

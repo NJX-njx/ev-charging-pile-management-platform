@@ -2,20 +2,23 @@
 
 #include "timeutil.h"
 
+#include <QCryptographicHash>
 #include <QJsonDocument>
+#include <QRandomGenerator>
 #include <cmath>
 
 namespace Protocol {
 
 const char *const kUserSelect =
-    "SELECT userId, phone, nickname, balanceFen, status, regTime, avatarMime, avatarBase64 FROM users";
+    "SELECT userId, phone, nickname, balanceFen, status, regTime, avatarMime, avatarBase64,"
+    " passwordHash, deleted FROM users";
 
 const char *const kStationAggregateSelect =
     "SELECT s.stationId, s.name, s.address, s.lng, s.lat, s.priceFenPerKwh,"
     " COUNT(p.pileId),"
     " COALESCE(SUM(p.status = 'idle'), 0),"
     " COALESCE(SUM(p.status IN ('idle', 'in_use')), 0)"
-    " FROM stations s LEFT JOIN piles p ON p.stationId = s.stationId";
+    " FROM stations s LEFT JOIN piles p ON p.stationId = s.stationId AND p.deleted = 0";
 
 const char *const kPileSelect =
     "SELECT p.pileId, p.code, p.stationId, p.type, p.powerKw, p.status,"
@@ -27,6 +30,14 @@ const char *const kOrderSelect =
     " o.startTime, o.endTime, o.settledAt, o.energyWh, o.amountFen, s.name, p.code, o.userId"
     " FROM orders o JOIN stations s ON s.stationId = o.stationId"
     " JOIN piles p ON p.pileId = o.pileId";
+
+const char *const kAdminOrderSelect =
+    "SELECT o.orderId, o.stationId, o.pileId, o.status, o.unitPriceFen, o.reservedAt,"
+    " o.startTime, o.endTime, o.settledAt, o.energyWh, o.amountFen, s.name, p.code, o.userId,"
+    " u.phone"
+    " FROM orders o JOIN stations s ON s.stationId = o.stationId"
+    " JOIN piles p ON p.pileId = o.pileId"
+    " JOIN users u ON u.userId = o.userId";
 
 Envelope parseEnvelope(const QByteArray &line)
 {
@@ -115,6 +126,40 @@ bool readLngLat(const QJsonObject &obj, double &lng, double &lat)
     return lng >= -180.0 && lng <= 180.0 && lat >= -90.0 && lat <= 90.0;
 }
 
+bool isValidPassword(const QString &password)
+{
+    if (password.length() < 6 || password.length() > 20)
+        return false;
+    for (const QChar c : password) {
+        if (c.isSpace())
+            return false;
+    }
+    return true;
+}
+
+QString passwordRecord(const QString &password)
+{
+    QByteArray salt(16, Qt::Uninitialized);
+    for (int i = 0; i < salt.size(); ++i)
+        salt[i] = static_cast<char>(QRandomGenerator::global()->bounded(256));
+    const QByteArray saltHex = salt.toHex();
+    const QByteArray hash = QCryptographicHash::hash(saltHex + password.toUtf8(),
+                                                     QCryptographicHash::Sha256).toHex();
+    return QString::fromLatin1(saltHex) + QLatin1Char(':') + QString::fromLatin1(hash);
+}
+
+bool verifyPassword(const QString &record, const QString &password)
+{
+    const int sep = record.indexOf(QLatin1Char(':'));
+    if (sep <= 0)
+        return false;
+    const QByteArray saltHex = record.left(sep).toLatin1();
+    const QByteArray expected = record.mid(sep + 1).toLatin1();
+    const QByteArray actual = QCryptographicHash::hash(saltHex + password.toUtf8(),
+                                                       QCryptographicHash::Sha256).toHex();
+    return actual == expected;
+}
+
 QJsonObject userJson(const QSqlQuery &q, bool withAvatar)
 {
     QJsonObject obj;
@@ -124,6 +169,7 @@ QJsonObject userJson(const QSqlQuery &q, bool withAvatar)
     obj.insert(QStringLiteral("balance"), q.value(3).toLongLong() / 100.0);
     obj.insert(QStringLiteral("regTime"), TimeUtil::isoFromSecs(q.value(5).toLongLong()));
     obj.insert(QStringLiteral("status"), q.value(4).toString());
+    obj.insert(QStringLiteral("hasPassword"), !q.value(8).isNull());
     if (withAvatar) {
         if (q.value(6).isNull() || q.value(7).isNull()) {
             obj.insert(QStringLiteral("avatar"), QJsonValue::Null);
@@ -200,6 +246,13 @@ QJsonObject orderJson(const QSqlQuery &q)
         obj.insert(QStringLiteral("amount"), QJsonValue::Null);
     else
         obj.insert(QStringLiteral("amount"), q.value(10).toLongLong() / 100.0);
+    return obj;
+}
+
+QJsonObject adminOrderJson(const QSqlQuery &q)
+{
+    QJsonObject obj = orderJson(q);
+    obj.insert(QStringLiteral("userPhone"), q.value(14).toString());
     return obj;
 }
 
