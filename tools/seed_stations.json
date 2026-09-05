@@ -1,0 +1,20 @@
+[
+  {"name": "北理工良乡校区东门站", "address": "房山区良乡高教园区北京理工大学东门", "lng": 116.1412, "lat": 39.7356, "pricePerKwh": 1.20, "pileCount": 8},
+  {"name": "北理工良乡校区南区站", "address": "房山区良乡高教园区北京理工大学南区宿舍旁", "lng": 116.1389, "lat": 39.7281, "pricePerKwh": 1.10, "pileCount": 6},
+  {"name": "良乡大学城西站", "address": "房山区良乡大学城西地铁站停车场", "lng": 116.1268, "lat": 39.7312, "pricePerKwh": 1.30, "pileCount": 10},
+  {"name": "良乡龙湖天街站", "address": "房山区良乡龙湖北京房山天街地下停车场", "lng": 116.1521, "lat": 39.7445, "pricePerKwh": 1.50, "pileCount": 12},
+  {"name": "良乡体育中心站", "address": "房山区良乡体育中心东侧停车场", "lng": 116.1335, "lat": 39.7418, "pricePerKwh": 1.20, "pileCount": 6},
+  {"name": "长阳地铁站站", "address": "房山区长阳地铁站P+R停车场", "lng": 116.2125, "lat": 39.7628, "pricePerKwh": 1.40, "pileCount": 10},
+  {"name": "首创奥特莱斯站", "address": "房山区长阳镇首创奥特莱斯停车场", "lng": 116.2203, "lat": 39.7651, "pricePerKwh": 1.60, "pileCount": 14},
+  {"name": "房山政府服务中心站", "address": "房山区拱辰街道政服务中心停车场", "lng": 116.1427, "lat": 39.7479, "pricePerKwh": 1.20, "pileCount": 8},
+  {"name": "丰台科技园站", "address": "丰台区科技园总部基地西区停车场", "lng": 116.2831, "lat": 39.8352, "pricePerKwh": 1.50, "pileCount": 12},
+  {"name": "北京西站南广场站", "address": "丰台区北京西站南广场地下停车场", "lng": 116.3207, "lat": 39.8949, "pricePerKwh": 1.80, "pileCount": 16},
+  {"name": "海淀中关村创业大街站", "address": "海淀区中关村创业大街停车场", "lng": 116.3069, "lat": 39.9828, "pricePerKwh": 1.80, "pileCount": 12},
+  {"name": "北理工中关村校区站", "address": "海淀区北京理工大学中关村校区南门", "lng": 116.3105, "lat": 39.9589, "pricePerKwh": 1.50, "pileCount": 10},
+  {"name": "五棵松华熙站", "address": "海淀区五棵松华熙LIVE地下停车场", "lng": 116.2742, "lat": 39.9146, "pricePerKwh": 1.70, "pileCount": 14},
+  {"name": "朝阳大悦城站", "address": "朝阳区朝阳大悦城地下停车场", "lng": 116.5179, "lat": 39.9237, "pricePerKwh": 1.70, "pileCount": 16},
+  {"name": "国贸CBD站", "address": "朝阳区国贸桥西北角国贸停车场", "lng": 116.4598, "lat": 39.9088, "pricePerKwh": 2.00, "pileCount": 20},
+  {"name": "望京SOHO站", "address": "朝阳区望京SOHO塔三地下停车场", "lng": 116.4781, "lat": 39.9963, "pricePerKwh": 1.80, "pileCount": 14},
+  {"name": "东城王府井站", "address": "东城区王府井大街东方广场停车场", "lng": 116.4108, "lat": 39.9142, "pricePerKwh": 2.00, "pileCount": 12},
+  {"name": "西城西单站", "address": "西城区西单大悦城地下停车场", "lng": 116.3744, "lat": 39.9105, "pricePerKwh": 1.90, "pileCount": 12}
+]
