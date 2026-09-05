@@ -103,7 +103,7 @@ QJsonObject Stats::pileStatusOverview(const QSqlDatabase &db)
 {
     qint64 idle = 0, inUse = 0, fault = 0;
     QSqlQuery q(db);
-    q.prepare(QStringLiteral("SELECT status, COUNT(*) FROM piles GROUP BY status"));
+    q.prepare(QStringLiteral("SELECT status, COUNT(*) FROM piles WHERE deleted = 0 GROUP BY status"));
     if (q.exec()) {
         while (q.next()) {
             const QString status = q.value(0).toString();
@@ -131,7 +131,7 @@ QJsonArray Stats::stationSummaries(const QSqlDatabase &db)
     QJsonArray out;
     QSqlQuery q(db);
     q.prepare(QString::fromLatin1(Protocol::kStationAggregateSelect)
-              + QStringLiteral(" GROUP BY s.stationId ORDER BY s.stationId"));
+              + QStringLiteral(" WHERE s.deleted = 0 GROUP BY s.stationId ORDER BY s.stationId"));
     if (q.exec()) {
         while (q.next())
             out.append(Protocol::stationSummaryJson(q));
