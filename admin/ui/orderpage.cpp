@@ -26,6 +26,7 @@
 
 namespace {
 
+// 列表与详情对话框用的完整时间格式
 QString fmtTime(const QJsonValue &value)
 {
     const QString s = value.toString();
@@ -33,6 +34,16 @@ QString fmtTime(const QJsonValue &value)
         return QStringLiteral("—");
     const QDateTime dt = QDateTime::fromString(s, Qt::ISODate);
     return dt.isValid() ? dt.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) : s;
+}
+
+// 列表内紧凑时间格式（完整时间见单元格 tooltip 与详情对话框）
+QString fmtTimeShort(const QJsonValue &value)
+{
+    const QString s = value.toString();
+    if (s.isEmpty())
+        return QStringLiteral("—");
+    const QDateTime dt = QDateTime::fromString(s, Qt::ISODate);
+    return dt.isValid() ? dt.toString(QStringLiteral("MM-dd HH:mm")) : s;
 }
 
 QString fmtNum(const QJsonValue &value, int precision)
@@ -109,6 +120,25 @@ OrderPage::OrderPage(SocketClient *client, QWidget *parent)
     // 操作列控件排序时由工厂重建（Qt 单元格控件不可跨行搬运）
     m_ft->setCellWidgetFactory(8, [this](int row) { return createOrderOps(row); });
     m_table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    m_table->horizontalHeader()->setMinimumSectionSize(30);
+    // 只给站点列留弹性空间：订单号/手机号/电桩编号/状态/操作固定窄宽，
+    // 电量/金额右对齐数字固定宽，结算时间列内紧凑格式 MM-dd HH:mm
+    m_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
+    m_table->setColumnWidth(0, 82);
+    m_table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Fixed);
+    m_table->setColumnWidth(1, 100);
+    m_table->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Fixed);
+    m_table->setColumnWidth(3, 100);
+    m_table->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Fixed);
+    m_table->setColumnWidth(4, 80);
+    m_table->horizontalHeader()->setSectionResizeMode(5, QHeaderView::Fixed);
+    m_table->setColumnWidth(5, 104);
+    m_table->horizontalHeader()->setSectionResizeMode(6, QHeaderView::Fixed);
+    m_table->setColumnWidth(6, 96);
+    m_table->horizontalHeader()->setSectionResizeMode(7, QHeaderView::Fixed);
+    m_table->setColumnWidth(7, 112);
+    m_table->horizontalHeader()->setSectionResizeMode(8, QHeaderView::Fixed);
+    m_table->setColumnWidth(8, 70);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -229,17 +259,32 @@ void OrderPage::loadOrders()
                                   idItem->setData(Qt::UserRole, orderId);
                                   m_table->setItem(row, 0, idItem);
                                   m_table->setItem(row, 1, new QTableWidgetItem(o[QStringLiteral("userPhone")].toString()));
-                                  m_table->setItem(row, 2, new QTableWidgetItem(o[QStringLiteral("stationName")].toString()));
-                                  m_table->setItem(row, 3, new QTableWidgetItem(o[QStringLiteral("pileCode")].toString()));
+                                  // 站点列弹性宽度，长站名省略显示，tooltip 给出完整文本
+                                  QTableWidgetItem *stationItem = new QTableWidgetItem(o[QStringLiteral("stationName")].toString());
+                                  stationItem->setToolTip(o[QStringLiteral("stationName")].toString());
+                                  m_table->setItem(row, 2, stationItem);
+                                  QTableWidgetItem *pileItem = new QTableWidgetItem(o[QStringLiteral("pileCode")].toString());
+                                  pileItem->setToolTip(o[QStringLiteral("pileCode")].toString());
+                                  m_table->setItem(row, 3, pileItem);
 
                                   const QString status = o[QStringLiteral("status")].toString();
                                   QTableWidgetItem *statusItem = new QTableWidgetItem(UiEnums::orderStatusText(status));
                                   statusItem->setForeground(UiEnums::orderStatusColor(status));
                                   m_table->setItem(row, 4, statusItem);
 
-                                  m_table->setItem(row, 5, new QTableWidgetItem(fmtNum(o[QStringLiteral("energyKwh")], 3)));
-                                  m_table->setItem(row, 6, new QTableWidgetItem(fmtNum(o[QStringLiteral("amount")], 2)));
-                                  m_table->setItem(row, 7, new QTableWidgetItem(fmtTime(o[QStringLiteral("settledAt")])));
+                                  // 电量/金额数字列右对齐
+                                  QTableWidgetItem *energyItem = new QTableWidgetItem(fmtNum(o[QStringLiteral("energyKwh")], 3));
+                                  energyItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+                                  m_table->setItem(row, 5, energyItem);
+                                  QTableWidgetItem *amountItem = new QTableWidgetItem(fmtNum(o[QStringLiteral("amount")], 2));
+                                  amountItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+                                  m_table->setItem(row, 6, amountItem);
+                                  // 结算时间列内紧凑格式（MM-dd HH:mm），完整时间见 tooltip 与详情对话框；
+                                  // 排序键取原始 ISO 时间串，保证跨年也有正确时序
+                                  QTableWidgetItem *settledItem = new QTableWidgetItem(fmtTimeShort(o[QStringLiteral("settledAt")]));
+                                  settledItem->setToolTip(fmtTime(o[QStringLiteral("settledAt")]));
+                                  settledItem->setData(kSortKeyRole, o[QStringLiteral("settledAt")].toString());
+                                  m_table->setItem(row, 7, settledItem);
 
                                   m_table->setCellWidget(row, 8, createOrderOps(row));
                               }

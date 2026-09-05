@@ -52,6 +52,12 @@ private:
 // Excel 式表格排序与筛选助手（用法见 filtertable.cpp 顶部注释）：
 // 点击表头列名在 升序→降序→不排序 间切换；点击表头右侧漏斗图标弹出该列
 // 去重值多选清单，勾选后仅显示匹配行，筛选与排序可叠加。
+
+// 可选排序键：页面可给某列 item 设置该 role（数值或文本），排序时优先于
+// 单元格文本参与比较。用于文本不可直接比较的列，如「桩数/在线率」合并列
+//（排序键取桩数数值）、「MM-dd HH:mm」紧凑时间列（排序键取原始 ISO 时间串）。
+inline constexpr int kSortKeyRole = Qt::UserRole + 50;
+
 class FilterTable : public QObject
 {
     Q_OBJECT

@@ -36,6 +36,37 @@
 #include "net/socketclient.h"
 #include "uienums.h"
 
+namespace {
+
+// 站点表列索引：桩数/在线率为「总桩数 + 在线率」合并列
+constexpr int kStationColId = 0;
+constexpr int kStationColName = 1;
+constexpr int kStationColAddress = 2;
+constexpr int kStationColPrice = 3;
+constexpr int kStationColPiles = 4;
+constexpr int kStationColStatus = 5;
+constexpr int kStationColOps = 6;
+
+// 电桩表列索引：所属站列仅「全部站点」模式显示（setColumnHidden 动态切换）
+constexpr int kPileColCode = 0;
+constexpr int kPileColStation = 1;
+constexpr int kPileColType = 2;
+constexpr int kPileColPower = 3;
+constexpr int kPileColStatus = 4;
+constexpr int kPileColCount = 5;
+constexpr int kPileColDuration = 6;
+
+// 状态总览条徽标：objectName 供 QSS 与自动化测试定位，status 属性供配色
+QLabel *createStatusBadge(const QString &status)
+{
+    QLabel *badge = new QLabel(QStringLiteral("--"));
+    badge->setObjectName(QStringLiteral("pileStatusBadge"));
+    badge->setProperty("status", status);
+    return badge;
+}
+
+} // namespace
+
 StationPilePage::StationPilePage(SocketClient *client, QWidget *parent)
     : QWidget(parent), m_client(client)
 {
@@ -66,6 +97,20 @@ StationPilePage::StationPilePage(SocketClient *client, QWidget *parent)
     controls->addWidget(refreshBtn);
     root->addLayout(controls);
 
+    // 状态总览条：全站电桩状态数量徽标（原电桩状态页总览并入，随页面刷新）
+    QHBoxLayout *overview = new QHBoxLayout;
+    overview->addWidget(new QLabel(QStringLiteral("电桩状态")));
+    m_badgeIdle = createStatusBadge(QStringLiteral("idle"));
+    m_badgeInUse = createStatusBadge(QStringLiteral("in_use"));
+    m_badgeFault = createStatusBadge(QStringLiteral("fault"));
+    m_badgeTotal = createStatusBadge(QStringLiteral("total"));
+    overview->addWidget(m_badgeIdle);
+    overview->addWidget(m_badgeInUse);
+    overview->addWidget(m_badgeFault);
+    overview->addWidget(m_badgeTotal);
+    overview->addStretch();
+    root->addLayout(overview);
+
     QSplitter *splitter = new QSplitter(Qt::Horizontal);
     splitter->setObjectName(QStringLiteral("stationPileSplitter"));
     splitter->setChildrenCollapsible(false);
@@ -77,27 +122,38 @@ StationPilePage::StationPilePage(SocketClient *client, QWidget *parent)
 
     m_stationTable = new QTableWidget;
     m_stationTable->setObjectName(QStringLiteral("stationTable"));
-    // 合并页宽度有限：经度/纬度只在修改对话框展示（不可改），不占用列表列
-    m_stationTable->setColumnCount(8);
+    // 合并页宽度有限：经度/纬度只在修改对话框展示（不可改），不占用列表列；
+    // 总桩数与在线率合并为一列，把宽度让给站名/地址
+    m_stationTable->setColumnCount(7);
     m_stationTable->setHorizontalHeaderLabels({
         QStringLiteral("ID"), QStringLiteral("站名"), QStringLiteral("地址"),
-        QStringLiteral("单价"), QStringLiteral("总桩数"), QStringLiteral("在线率"),
+        QStringLiteral("单价"), QStringLiteral("桩数/在线率"),
         QStringLiteral("状态"), QStringLiteral("操作"),
     });
+    // 窄列表头左对齐：宽度不足时从右侧省略（完整列名见表头 tooltip），
+    // 避免居中对齐把表头截成「数/在线」这类不可读片段
+    m_stationTable->horizontalHeaderItem(kStationColPiles)
+        ->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     // 先挂筛选排序表头，再配置列宽模式（setHorizontalHeader 会替换表头实例）
     m_stationFt = new FilterTable(m_stationTable, this);
-    m_stationFt->setExcludedColumns({7});
+    m_stationFt->setExcludedColumns({kStationColOps});
     m_stationFt->setScopeNote(QStringLiteral("站点为服务端分页，排序与筛选仅作用于当前页数据"));
     // 操作列控件排序时由工厂重建（Qt 单元格控件不可跨行搬运）
-    m_stationFt->setCellWidgetFactory(7, [this](int row) { return createStationOps(row); });
+    m_stationFt->setCellWidgetFactory(kStationColOps, [this](int row) { return createStationOps(row); });
     m_stationTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     // 窄窗口下允许列压缩省略显示（而不是挤出水平滚动条）
     m_stationTable->horizontalHeader()->setMinimumSectionSize(30);
-    // ID 与操作列固定宽度，把空间留给站名/地址
-    m_stationTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
-    m_stationTable->setColumnWidth(0, 50);
-    m_stationTable->horizontalHeader()->setSectionResizeMode(7, QHeaderView::Fixed);
-    m_stationTable->setColumnWidth(7, 130);
+    // ID/操作固定宽度，单价/桩数/状态固定小宽，把空间留给站名/地址
+    m_stationTable->horizontalHeader()->setSectionResizeMode(kStationColId, QHeaderView::Fixed);
+    m_stationTable->setColumnWidth(kStationColId, 50);
+    m_stationTable->horizontalHeader()->setSectionResizeMode(kStationColPrice, QHeaderView::Fixed);
+    m_stationTable->setColumnWidth(kStationColPrice, 66);
+    m_stationTable->horizontalHeader()->setSectionResizeMode(kStationColPiles, QHeaderView::Fixed);
+    m_stationTable->setColumnWidth(kStationColPiles, 90);
+    m_stationTable->horizontalHeader()->setSectionResizeMode(kStationColStatus, QHeaderView::Fixed);
+    m_stationTable->setColumnWidth(kStationColStatus, 66);
+    m_stationTable->horizontalHeader()->setSectionResizeMode(kStationColOps, QHeaderView::Fixed);
+    m_stationTable->setColumnWidth(kStationColOps, 130);
     m_stationTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_stationTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_stationTable->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -121,13 +177,22 @@ StationPilePage::StationPilePage(SocketClient *client, QWidget *parent)
 
     splitter->addWidget(leftPanel);
 
-    // 右侧：当前站点的电桩列表
+    // 右侧：站点范围（全部站点 / 当前联动站点）内的电桩列表
     QWidget *rightPanel = new QWidget;
     QVBoxLayout *rightLayout = new QVBoxLayout(rightPanel);
     rightLayout->setContentsMargins(0, 0, 0, 0);
 
     QHBoxLayout *pileInfo = new QHBoxLayout;
-    m_currentStationLabel = new QLabel(QStringLiteral("当前站点：—"));
+    pileInfo->addWidget(new QLabel(QStringLiteral("当前站点：")));
+    // index 0 = 全部站点（pile_list 全量），index 1 = 左侧当前联动站点（文本随选中更新）
+    m_stationScopeCombo = new QComboBox;
+    m_stationScopeCombo->setObjectName(QStringLiteral("comboStationScope"));
+    m_stationScopeCombo->addItem(QStringLiteral("全部站点"), 0);
+    m_stationScopeCombo->addItem(QStringLiteral("（未选择站点）"), -1);
+    m_stationScopeCombo->setCurrentIndex(1);
+    pileInfo->addWidget(m_stationScopeCombo);
+    // 提示语：已删除站点仅历史查看 / 未选择站点等（正常情况为空）
+    m_currentStationLabel = new QLabel;
     m_currentStationLabel->setObjectName(QStringLiteral("labelCurrentStation"));
     pileInfo->addWidget(m_currentStationLabel);
     m_showDeletedPilesCheck = new QCheckBox(QStringLiteral("显示已删除"));
@@ -166,16 +231,22 @@ StationPilePage::StationPilePage(SocketClient *client, QWidget *parent)
 
     m_pileTable = new QTableWidget;
     m_pileTable->setObjectName(QStringLiteral("pileTable"));
-    m_pileTable->setColumnCount(6);
-    // 合并页右侧宽度有限，列名从简（含义同原充电桩管理页）
+    // 合并页右侧宽度有限，列名从简（含义同原充电桩管理页）；
+    // 所属站列仅「全部站点」模式显示，单站模式隐藏
+    m_pileTable->setColumnCount(7);
     m_pileTable->setHorizontalHeaderLabels({
-        QStringLiteral("编号"), QStringLiteral("类型"), QStringLiteral("功率"),
-        QStringLiteral("状态"), QStringLiteral("次数"), QStringLiteral("时长(h)"),
+        QStringLiteral("编号"), QStringLiteral("所属站"), QStringLiteral("类型"),
+        QStringLiteral("功率"), QStringLiteral("状态"), QStringLiteral("次数"),
+        QStringLiteral("时长(h)"),
     });
+    // 右栏为收窄吸收区，「时长(h)」表头左对齐保证省略时仍可读（时长…）
+    m_pileTable->horizontalHeaderItem(kPileColDuration)
+        ->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     m_pileFt = new FilterTable(m_pileTable, this);
-    m_pileFt->setScopeNote(QStringLiteral("作用于当前选中站点的全部电桩（未分页）"));
+    m_pileFt->setScopeNote(QStringLiteral("作用于当前站点范围内的全部电桩（未分页）"));
     m_pileTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     m_pileTable->horizontalHeader()->setMinimumSectionSize(30);
+    m_pileTable->setColumnHidden(kPileColStation, true);
     m_pileTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_pileTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_pileTable->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -219,13 +290,18 @@ StationPilePage::StationPilePage(SocketClient *client, QWidget *parent)
             loadStations();
         }
     });
-    // 选中站点变化 → 右侧电桩联动刷新（loadStations 内部统一触发，见 m_loadingStations）
+    // 选中站点变化 → 同步站点范围下拉并联动刷新右侧电桩
+    //（loadStations 内部统一触发 loadPiles，见 m_loadingStations）
     connect(m_stationTable, &QTableWidget::itemSelectionChanged, this, [this]() {
+        syncStationScopeCombo();
         if (!m_loadingStations)
             loadPiles();
     });
 
     // ---- 电桩侧信号 ----
+    // 站点范围切换（全部站点 ↔ 当前联动站点）
+    connect(m_stationScopeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this]() { loadPiles(true); });
     connect(pileRefreshBtn, &QPushButton::clicked, this, [this]() { loadPiles(true); });
     connect(m_showDeletedPilesCheck, &QCheckBox::toggled, this, [this]() { loadPiles(true); });
     connect(m_addPileBtn, &QPushButton::clicked, this, &StationPilePage::onAddPile);
@@ -237,8 +313,8 @@ StationPilePage::StationPilePage(SocketClient *client, QWidget *parent)
     connect(m_pileTable, &QTableWidget::itemSelectionChanged, this, &StationPilePage::updatePileActionButtons);
     // 在用行双击查看占用订单（已删除行仅历史查看，不响应）
     connect(m_pileTable, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
-        QTableWidgetItem *statusItem = m_pileTable->item(row, 3);
-        QTableWidgetItem *codeItem = m_pileTable->item(row, 0);
+        QTableWidgetItem *statusItem = m_pileTable->item(row, kPileColStatus);
+        QTableWidgetItem *codeItem = m_pileTable->item(row, kPileColCode);
         const bool deleted = codeItem && codeItem->data(Qt::UserRole + 1).toBool();
         if (!deleted && statusItem && statusItem->data(Qt::UserRole).toString() == QStringLiteral("in_use"))
             onShowActiveOrder();
@@ -254,6 +330,40 @@ StationPilePage::StationPilePage(SocketClient *client, QWidget *parent)
 void StationPilePage::refresh()
 {
     loadStations();
+    loadStatusOverview();
+}
+
+void StationPilePage::loadStatusOverview()
+{
+    m_client->sendRequest(QStringLiteral("pile_status_overview"), QJsonObject(),
+                          [this](int code, const QString &, const QJsonObject &data) {
+                              if (code != 0)
+                                  return;
+                              const int idle = data[QStringLiteral("idle")].toInt();
+                              const int inUse = data[QStringLiteral("inUse")].toInt();
+                              const int fault = data[QStringLiteral("fault")].toInt();
+                              const int total = data[QStringLiteral("total")].toInt();
+                              const double idlePct = total > 0 ? 100.0 * idle / total : 0.0;
+                              m_badgeIdle->setText(QStringLiteral("空闲 %1（%2%）").arg(idle).arg(idlePct, 0, 'f', 1));
+                              m_badgeInUse->setText(QStringLiteral("在用 %1").arg(inUse));
+                              m_badgeFault->setText(QStringLiteral("故障 %1").arg(fault));
+                              m_badgeTotal->setText(QStringLiteral("总计 %1").arg(total));
+                          });
+}
+
+void StationPilePage::syncStationScopeCombo()
+{
+    const int stationId = selectedStationId();
+    // index 1 始终跟随左侧选中站点；无选中时占位为「（未选择站点）」
+    if (stationId >= 0) {
+        const auto items = m_stationTable->selectedItems();
+        QTableWidgetItem *nameItem = m_stationTable->item(items.first()->row(), kStationColName);
+        m_stationScopeCombo->setItemText(1, nameItem ? nameItem->text() : QString());
+        m_stationScopeCombo->setItemData(1, stationId);
+    } else {
+        m_stationScopeCombo->setItemText(1, QStringLiteral("（未选择站点）"));
+        m_stationScopeCombo->setItemData(1, -1);
+    }
 }
 
 int StationPilePage::totalPages() const
@@ -324,23 +434,27 @@ void StationPilePage::loadStations()
                                   idItem->setData(Qt::UserRole + 1, deleted);
                                   // 站点原始 JSON 随行存储，供操作列工厂重建「修改」「删除」按钮
                                   idItem->setData(Qt::UserRole + 2, QVariant::fromValue(s));
-                                  m_stationTable->setItem(row, 0, idItem);
+                                  m_stationTable->setItem(row, kStationColId, idItem);
                                   // 合并页宽度有限，站名/地址可能省略显示，tooltip 给出完整文本
                                   QTableWidgetItem *nameItem = new QTableWidgetItem(s[QStringLiteral("name")].toString());
                                   nameItem->setToolTip(s[QStringLiteral("name")].toString());
-                                  m_stationTable->setItem(row, 1, nameItem);
+                                  m_stationTable->setItem(row, kStationColName, nameItem);
                                   QTableWidgetItem *addressItem = new QTableWidgetItem(s[QStringLiteral("address")].toString());
                                   addressItem->setToolTip(s[QStringLiteral("address")].toString());
-                                  m_stationTable->setItem(row, 2, addressItem);
-                                  m_stationTable->setItem(row, 3, new QTableWidgetItem(QString::number(s[QStringLiteral("pricePerKwh")].toDouble(), 'f', 2)));
-                                  m_stationTable->setItem(row, 4, new QTableWidgetItem(QString::number(s[QStringLiteral("pileTotal")].toInt())));
-                                  m_stationTable->setItem(row, 5, new QTableWidgetItem(QStringLiteral("%1%").arg(s[QStringLiteral("onlineRate")].toDouble() * 100, 0, 'f', 0)));
+                                  m_stationTable->setItem(row, kStationColAddress, addressItem);
+                                  m_stationTable->setItem(row, kStationColPrice, new QTableWidgetItem(QString::number(s[QStringLiteral("pricePerKwh")].toDouble(), 'f', 2)));
+                                  // 总桩数与在线率合并显示（形如 8 / 90%），排序键取桩数数值
+                                  const int pileTotal = s[QStringLiteral("pileTotal")].toInt();
+                                  QTableWidgetItem *pilesItem = new QTableWidgetItem(
+                                      QStringLiteral("%1 / %2%").arg(pileTotal).arg(s[QStringLiteral("onlineRate")].toDouble() * 100, 0, 'f', 0));
+                                  pilesItem->setData(kSortKeyRole, pileTotal);
+                                  m_stationTable->setItem(row, kStationColPiles, pilesItem);
 
                                   QTableWidgetItem *statusItem = new QTableWidgetItem(UiEnums::recordStatusText(deleted));
                                   statusItem->setForeground(UiEnums::recordStatusColor(deleted));
-                                  m_stationTable->setItem(row, 6, statusItem);
+                                  m_stationTable->setItem(row, kStationColStatus, statusItem);
 
-                                  m_stationTable->setCellWidget(row, 7, createStationOps(row));
+                                  m_stationTable->setCellWidget(row, kStationColOps, createStationOps(row));
                               }
                               // 重载后恢复选中：优先按 stationId 找回原行（跳过筛选隐藏行），
                               // 否则选中第一可见行，保证右侧电桩始终有真实选中站点可用
@@ -357,49 +471,47 @@ void StationPilePage::loadStations()
 
 void StationPilePage::loadPiles(bool force)
 {
-    const int stationId = selectedStationId();
-    m_stationDeleted = selectedStationDeleted();
+    // 站点范围：0=全部站点，>0=单站（左侧联动站点），-1=无选中站点
+    const int scopeId = m_stationScopeCombo->currentData().toInt();
+    const bool allStations = scopeId == 0;
+    m_stationDeleted = !allStations && selectedStationDeleted();
     updatePileActionButtons();
+    m_pileTable->setColumnHidden(kPileColStation, !allStations);
 
-    if (stationId < 0) {
-        m_loadedStationId = -1;
-        m_currentStationLabel->setText(QStringLiteral("当前站点：—（请在左侧选择站点）"));
+    if (scopeId < 0) {
+        m_loadedScopeId = -1;
+        m_currentStationLabel->setText(QStringLiteral("（请在左侧选择站点，或切换全部站点）"));
         m_pileTable->setRowCount(0);
         return;
     }
     // 已删除站点仅用于历史查看（协议 3.4：station_detail/pile_list 对其按不存在处理）
     if (m_stationDeleted) {
-        m_loadedStationId = -1;
-        m_currentStationLabel->setText(QStringLiteral("当前站点：已删除，仅用于历史查看"));
+        m_loadedScopeId = -1;
+        m_currentStationLabel->setText(QStringLiteral("（已删除站点，仅用于历史查看）"));
         m_pileTable->setRowCount(0);
         return;
     }
-    if (!force && stationId == m_loadedStationId)
+    if (!force && scopeId == m_loadedScopeId)
         return;
 
-    QJsonObject payload{{QStringLiteral("stationId"), stationId}};
+    m_currentStationLabel->clear();
+    QJsonObject payload{{QStringLiteral("stationId"), scopeId}};
     if (m_showDeletedPilesCheck->isChecked())
         payload[QStringLiteral("includeDeleted")] = true;
     m_client->sendRequest(QStringLiteral("pile_list"), payload,
-                          [this, stationId](int code, const QString &, const QJsonObject &data) {
+                          [this, scopeId](int code, const QString &, const QJsonObject &data) {
                               if (code != 0)
                                   return;
-                              // 响应到达时选中站点已切换则丢弃，等待新选站点的响应
-                              if (selectedStationId() != stationId)
+                              // 响应到达时站点范围已切换则丢弃，等待新范围的响应
+                              if (m_stationScopeCombo->currentData().toInt() != scopeId)
                                   return;
-                              m_loadedStationId = stationId;
-                              const QString stationName = [this]() {
-                                  const auto items = m_stationTable->selectedItems();
-                                  return items.isEmpty() ? QString()
-                                                         : m_stationTable->item(items.first()->row(), 1)->text();
-                              }();
-                              m_currentStationLabel->setText(QStringLiteral("当前站点：%1").arg(stationName));
+                              m_loadedScopeId = scopeId;
 
                               const int previousPileId = [this]() {
                                   const int row = selectedPileRow();
                                   if (row < 0)
                                       return -1;
-                                  QTableWidgetItem *it = m_pileTable->item(row, 0);
+                                  QTableWidgetItem *it = m_pileTable->item(row, kPileColCode);
                                   return it ? it->data(Qt::UserRole).toInt() : -1;
                               }();
                               const QJsonArray piles = data[QStringLiteral("piles")].toArray();
@@ -411,17 +523,24 @@ void StationPilePage::loadPiles(bool force)
                                   QTableWidgetItem *codeItem = new QTableWidgetItem(p[QStringLiteral("code")].toString());
                                   codeItem->setData(Qt::UserRole, p[QStringLiteral("pileId")].toInt());
                                   codeItem->setData(Qt::UserRole + 1, deleted);
-                                  m_pileTable->setItem(row, 0, codeItem);
+                                  codeItem->setToolTip(p[QStringLiteral("code")].toString());
+                                  m_pileTable->setItem(row, kPileColCode, codeItem);
+
+                                  // 所属站列仅全部站点模式有值可见，单站模式隐藏
+                                  const QString stationName = p[QStringLiteral("stationName")].toString();
+                                  QTableWidgetItem *stationItem = new QTableWidgetItem(stationName);
+                                  stationItem->setToolTip(stationName);
+                                  m_pileTable->setItem(row, kPileColStation, stationItem);
 
                                   const QString type = p[QStringLiteral("type")].toString();
                                   QTableWidgetItem *typeItem = new QTableWidgetItem(UiEnums::pileTypeText(type));
                                   typeItem->setData(Qt::UserRole, type);
-                                  m_pileTable->setItem(row, 1, typeItem);
+                                  m_pileTable->setItem(row, kPileColType, typeItem);
 
                                   const double powerKw = p[QStringLiteral("powerKw")].toDouble();
                                   QTableWidgetItem *powerItem = new QTableWidgetItem(QString::number(powerKw));
                                   powerItem->setData(Qt::UserRole, powerKw);
-                                  m_pileTable->setItem(row, 2, powerItem);
+                                  m_pileTable->setItem(row, kPileColPower, powerItem);
 
                                   const QString status = p[QStringLiteral("status")].toString();
                                   // 已删除电桩状态列固定显示「已删除」（色板文本-次色），原始状态保留在 UserRole
@@ -430,10 +549,10 @@ void StationPilePage::loadPiles(bool force)
                                   statusItem->setForeground(deleted ? UiEnums::recordStatusColor(true)
                                                                     : UiEnums::pileStatusColor(status));
                                   statusItem->setData(Qt::UserRole, status);
-                                  m_pileTable->setItem(row, 3, statusItem);
+                                  m_pileTable->setItem(row, kPileColStatus, statusItem);
 
-                                  m_pileTable->setItem(row, 4, new QTableWidgetItem(QString::number(p[QStringLiteral("chargeCount")].toInt())));
-                                  m_pileTable->setItem(row, 5, new QTableWidgetItem(QString::number(p[QStringLiteral("chargeMinutes")].toInt() / 60.0, 'f', 1)));
+                                  m_pileTable->setItem(row, kPileColCount, new QTableWidgetItem(QString::number(p[QStringLiteral("chargeCount")].toInt())));
+                                  m_pileTable->setItem(row, kPileColDuration, new QTableWidgetItem(QString::number(p[QStringLiteral("chargeMinutes")].toInt() / 60.0, 'f', 1)));
                               }
                               // 重载后恢复选中：优先按 pileId 找回原行（跳过筛选隐藏行），否则选中第一可见行
                               m_pileFt->apply();
@@ -460,9 +579,9 @@ void StationPilePage::updatePileActionButtons()
     bool deleted = false;
     if (hasSelection) {
         const int row = items.first()->row();
-        QTableWidgetItem *statusItem = m_pileTable->item(row, 3);
+        QTableWidgetItem *statusItem = m_pileTable->item(row, kPileColStatus);
         status = statusItem ? statusItem->data(Qt::UserRole).toString() : QString();
-        QTableWidgetItem *codeItem = m_pileTable->item(row, 0);
+        QTableWidgetItem *codeItem = m_pileTable->item(row, kPileColCode);
         deleted = codeItem && codeItem->data(Qt::UserRole + 1).toBool();
     }
     // 已删除记录仅用于历史查看，不作为修改/删除/重启/禁用/占用详情的操作对象
@@ -473,8 +592,10 @@ void StationPilePage::updatePileActionButtons()
     m_activeOrderBtn->setEnabled(hasSelection && !deleted && status == QStringLiteral("in_use"));
     m_editPileBtn->setEnabled(hasSelection && !deleted);
     m_deletePileBtn->setEnabled(hasSelection && !deleted);
-    // 新增电桩需要有未删除的选中站点作为默认所属站点
-    m_addPileBtn->setEnabled(selectedStationId() >= 0 && !m_stationDeleted);
+    // 新增电桩：单站模式需要有未删除的选中站点作为默认所属站点；
+    // 全部站点模式不受左侧选中限制（新增对话框内自选站点）
+    const bool allStationsMode = m_stationScopeCombo->currentData().toInt() == 0;
+    m_addPileBtn->setEnabled(!m_stationDeleted && (allStationsMode || selectedStationId() >= 0));
     const QString tip = deleted ? QStringLiteral("已删除记录不可操作") : QString();
     m_editPileBtn->setToolTip(tip);
     m_deletePileBtn->setToolTip(tip);
@@ -943,10 +1064,10 @@ void StationPilePage::onEditPile()
     const int row = selectedPileRow();
     if (row < 0)
         return;
-    const int pileId = m_pileTable->item(row, 0)->data(Qt::UserRole).toInt();
-    const QString code = m_pileTable->item(row, 0)->text();
-    const QString type = m_pileTable->item(row, 1)->data(Qt::UserRole).toString();
-    const double powerKw = m_pileTable->item(row, 2)->data(Qt::UserRole).toDouble();
+    const int pileId = m_pileTable->item(row, kPileColCode)->data(Qt::UserRole).toInt();
+    const QString code = m_pileTable->item(row, kPileColCode)->text();
+    const QString type = m_pileTable->item(row, kPileColType)->data(Qt::UserRole).toString();
+    const double powerKw = m_pileTable->item(row, kPileColPower)->data(Qt::UserRole).toDouble();
 
     QDialog dialog(this);
     dialog.setWindowTitle(QStringLiteral("修改电桩"));
@@ -1005,9 +1126,9 @@ void StationPilePage::onDeletePile()
     const int row = selectedPileRow();
     if (row < 0)
         return;
-    const int pileId = m_pileTable->item(row, 0)->data(Qt::UserRole).toInt();
-    const QString code = m_pileTable->item(row, 0)->text();
-    const QString status = m_pileTable->item(row, 3)->data(Qt::UserRole).toString();
+    const int pileId = m_pileTable->item(row, kPileColCode)->data(Qt::UserRole).toInt();
+    const QString code = m_pileTable->item(row, kPileColCode)->text();
+    const QString status = m_pileTable->item(row, kPileColStatus)->data(Qt::UserRole).toString();
 
     if (status != QStringLiteral("idle")) {
         QMessageBox::warning(this, QStringLiteral("删除电桩"), QStringLiteral("仅空闲状态的电桩可删除"));
@@ -1037,8 +1158,8 @@ void StationPilePage::onRestartClicked()
     const int row = selectedPileRow();
     if (row < 0)
         return;
-    const int pileId = m_pileTable->item(row, 0)->data(Qt::UserRole).toInt();
-    const QString code = m_pileTable->item(row, 0)->text();
+    const int pileId = m_pileTable->item(row, kPileColCode)->data(Qt::UserRole).toInt();
+    const QString code = m_pileTable->item(row, kPileColCode)->text();
 
     const auto ret = QMessageBox::question(this, QStringLiteral("远程重启"),
                                            QStringLiteral("确定要重启电桩 %1 吗？").arg(code));
@@ -1063,9 +1184,9 @@ void StationPilePage::onDisableClicked()
     const int row = selectedPileRow();
     if (row < 0)
         return;
-    const int pileId = m_pileTable->item(row, 0)->data(Qt::UserRole).toInt();
-    const QString code = m_pileTable->item(row, 0)->text();
-    const QString status = m_pileTable->item(row, 3)->data(Qt::UserRole).toString();
+    const int pileId = m_pileTable->item(row, kPileColCode)->data(Qt::UserRole).toInt();
+    const QString code = m_pileTable->item(row, kPileColCode)->text();
+    const QString status = m_pileTable->item(row, kPileColStatus)->data(Qt::UserRole).toString();
     if (status != QStringLiteral("idle")) {
         QMessageBox::warning(this, QStringLiteral("禁用电桩"), QStringLiteral("仅空闲状态的电桩可禁用"));
         return;
@@ -1094,8 +1215,8 @@ void StationPilePage::onShowActiveOrder()
     const int row = selectedPileRow();
     if (row < 0)
         return;
-    const int pileId = m_pileTable->item(row, 0)->data(Qt::UserRole).toInt();
-    const QString code = m_pileTable->item(row, 0)->text();
+    const int pileId = m_pileTable->item(row, kPileColCode)->data(Qt::UserRole).toInt();
+    const QString code = m_pileTable->item(row, kPileColCode)->text();
 
     m_activeOrderBtn->setEnabled(false);
     m_client->sendRequest(QStringLiteral("pile_active_order"), QJsonObject{{QStringLiteral("pileId"), pileId}},

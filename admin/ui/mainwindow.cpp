@@ -7,7 +7,6 @@
 
 #include "net/socketclient.h"
 #include "orderpage.h"
-#include "pilestatuspage.h"
 #include "salespage.h"
 #include "stationpilepage.h"
 #include "systempage.h"
@@ -21,9 +20,9 @@ MainWindow::MainWindow(SocketClient *client, const QString &username, const QStr
     ui->setupUi(this);
     setMinimumSize(1280, 800);
 
+    // 电桩状态总览已并入「站点与电桩」页顶部，不再单设导航页
     const QStringList modules = {
         QStringLiteral("销售业绩"),
-        QStringLiteral("电桩状态"),
         QStringLiteral("站点与电桩"),
         QStringLiteral("用户管理"),
         QStringLiteral("订单管理"),
@@ -33,14 +32,12 @@ MainWindow::MainWindow(SocketClient *client, const QString &username, const QStr
     ui->listWidgetNav->addItems(modules);
 
     SalesPage *salesPage = new SalesPage(m_client);
-    PileStatusPage *pileStatusPage = new PileStatusPage(m_client);
     StationPilePage *stationPilePage = new StationPilePage(m_client);
     UserPage *userPage = new UserPage(m_client);
     OrderPage *orderPage = new OrderPage(m_client);
     SystemPage *systemPage = new SystemPage(m_client, m_username);
 
     ui->stackedWidget->addWidget(salesPage);
-    ui->stackedWidget->addWidget(pileStatusPage);
     ui->stackedWidget->addWidget(stationPilePage);
     ui->stackedWidget->addWidget(userPage);
     ui->stackedWidget->addWidget(orderPage);
@@ -97,10 +94,9 @@ void MainWindow::refreshCurrentPage()
 {
     switch (ui->stackedWidget->currentIndex()) {
     case 0: static_cast<SalesPage *>(ui->stackedWidget->widget(0))->refresh(); break;
-    case 1: static_cast<PileStatusPage *>(ui->stackedWidget->widget(1))->refresh(); break;
-    case 2: static_cast<StationPilePage *>(ui->stackedWidget->widget(2))->refresh(); break;
-    case 3: static_cast<UserPage *>(ui->stackedWidget->widget(3))->refresh(); break;
-    case 4: static_cast<OrderPage *>(ui->stackedWidget->widget(4))->refresh(); break;
-    case 5: static_cast<SystemPage *>(ui->stackedWidget->widget(5))->refresh(); break;
+    case 1: static_cast<StationPilePage *>(ui->stackedWidget->widget(1))->refresh(); break;
+    case 2: static_cast<UserPage *>(ui->stackedWidget->widget(2))->refresh(); break;
+    case 3: static_cast<OrderPage *>(ui->stackedWidget->widget(3))->refresh(); break;
+    case 4: static_cast<SystemPage *>(ui->stackedWidget->widget(4))->refresh(); break;
     }
 }

@@ -15,7 +15,6 @@ SOURCES += \
     ui/loginwindow.cpp \
     ui/mainwindow.cpp \
     ui/orderpage.cpp \
-    ui/pilestatuspage.cpp \
     ui/salespage.cpp \
     ui/stationpilepage.cpp \
     ui/systempage.cpp \
@@ -27,7 +26,6 @@ HEADERS += \
     ui/loginwindow.h \
     ui/mainwindow.h \
     ui/orderpage.h \
-    ui/pilestatuspage.h \
     ui/salespage.h \
     ui/stationpilepage.h \
     ui/systempage.h \
