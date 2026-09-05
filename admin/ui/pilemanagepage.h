@@ -4,6 +4,7 @@
 
 #include <functional>
 
+class QCheckBox;
 class QJsonArray;
 class QPushButton;
 class QTableWidget;
@@ -30,6 +31,7 @@ private:
     void loadAllStations(const std::function<void(bool, const QJsonArray &)> &done);
 
     SocketClient *m_client;
+    QCheckBox *m_showDeletedCheck;
     QTableWidget *m_table;
     QPushButton *m_addBtn;
     QPushButton *m_editBtn;

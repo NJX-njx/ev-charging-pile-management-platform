@@ -53,6 +53,18 @@ inline QColor userStatusColor(const QString &status)
     return QColor(46, 125, 50);
 }
 
+// 逻辑删除记录（协议 3.4）：deleted=true 的行仅用于历史数据查看
+inline QString recordStatusText(bool deleted)
+{
+    return deleted ? QStringLiteral("已删除") : QStringLiteral("正常");
+}
+
+inline QColor recordStatusColor(bool deleted)
+{
+    // 已删除用色板「文本-次」#6B7280，正常用语义色「成功/正常」#2E7D32
+    return deleted ? QColor(107, 114, 128) : QColor(46, 125, 50);
+}
+
 inline QString orderStatusText(const QString &status)
 {
     if (status == QStringLiteral("reserved"))

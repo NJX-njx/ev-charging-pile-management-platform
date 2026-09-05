@@ -8,15 +8,16 @@ QDialog, QMessageBox {
     background: #FFFFFF;
 }
 
-/* 左侧导航：深色底 + 主色选中指示条 */
+/* 左侧导航：浅色底 + 主色选中指示条，色值取自 docs/visual-design.md 色板 */
 QListWidget#listWidgetNav {
-    background: #1F2937;
+    background: #FFFFFF;
     border: none;
+    border-right: 1px solid #E0E3E6;
     outline: none;
     font-size: 14px;
 }
 QListWidget#listWidgetNav::item {
-    color: #D7DDE5;
+    color: #1F2329;
     padding: 10px 12px;
     border-left: 4px solid transparent;
 }
@@ -26,7 +27,7 @@ QListWidget#listWidgetNav::item:selected {
     border-left: 4px solid #00A870;
 }
 QListWidget#listWidgetNav::item:hover:!selected {
-    background: #263448;
+    background: #F5F6F7;
 }
 
 /* 指标卡：白底圆角 */

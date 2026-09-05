@@ -3,6 +3,7 @@
 #include <QJsonObject>
 #include <QWidget>
 
+class QCheckBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
@@ -32,6 +33,7 @@ private:
 
     SocketClient *m_client;
     QLineEdit *m_searchEdit;
+    QCheckBox *m_showDeletedCheck;
     QTableWidget *m_table;
     QPushButton *m_addBtn;
     QPushButton *m_prevBtn;

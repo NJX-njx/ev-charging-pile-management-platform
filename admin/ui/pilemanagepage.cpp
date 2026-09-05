@@ -1,5 +1,6 @@
 #include "pilemanagepage.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -29,6 +30,9 @@ PileManagePage::PileManagePage(SocketClient *client, QWidget *parent)
 
     QHBoxLayout *controls = new QHBoxLayout;
     controls->addWidget(new QLabel(QStringLiteral("选中电桩后可执行修改、删除；故障电桩可远程重启（模拟）")));
+    m_showDeletedCheck = new QCheckBox(QStringLiteral("显示已删除"));
+    m_showDeletedCheck->setObjectName(QStringLiteral("checkShowDeleted"));
+    controls->addWidget(m_showDeletedCheck);
     controls->addStretch();
     m_addBtn = new QPushButton(QStringLiteral("新增电桩"));
     m_addBtn->setProperty("primary", true);
@@ -63,6 +67,7 @@ PileManagePage::PileManagePage(SocketClient *client, QWidget *parent)
     root->addWidget(m_table, 1);
 
     connect(refreshBtn, &QPushButton::clicked, this, &PileManagePage::refresh);
+    connect(m_showDeletedCheck, &QCheckBox::toggled, this, [this]() { refresh(); });
     connect(m_addBtn, &QPushButton::clicked, this, &PileManagePage::onAddPile);
     connect(m_editBtn, &QPushButton::clicked, this, &PileManagePage::onEditPile);
     connect(m_deleteBtn, &QPushButton::clicked, this, &PileManagePage::onDeletePile);
@@ -81,14 +86,21 @@ void PileManagePage::updateActionButtons()
     const auto items = m_table->selectedItems();
     const bool hasSelection = !items.isEmpty();
     bool canRestart = false;
+    bool deleted = false;
     if (hasSelection) {
         const int row = items.first()->row();
         QTableWidgetItem *statusItem = m_table->item(row, 4);
         canRestart = statusItem && statusItem->data(Qt::UserRole).toString() == QStringLiteral("fault");
+        deleted = m_table->item(row, 0)->data(Qt::UserRole + 1).toBool();
     }
-    m_restartBtn->setEnabled(canRestart);
-    m_editBtn->setEnabled(hasSelection);
-    m_deleteBtn->setEnabled(hasSelection);
+    // 已删除记录仅用于历史查看，不作为修改/删除/重启的操作对象
+    m_restartBtn->setEnabled(canRestart && !deleted);
+    m_editBtn->setEnabled(hasSelection && !deleted);
+    m_deleteBtn->setEnabled(hasSelection && !deleted);
+    const QString tip = deleted ? QStringLiteral("已删除记录不可操作") : QString();
+    m_editBtn->setToolTip(tip);
+    m_deleteBtn->setToolTip(tip);
+    m_restartBtn->setToolTip(tip);
 }
 
 int PileManagePage::selectedRow() const
@@ -101,7 +113,10 @@ int PileManagePage::selectedRow() const
 
 void PileManagePage::refresh()
 {
-    m_client->sendRequest(QStringLiteral("pile_list"), QJsonObject{{QStringLiteral("stationId"), 0}},
+    QJsonObject payload{{QStringLiteral("stationId"), 0}};
+    if (m_showDeletedCheck->isChecked())
+        payload[QStringLiteral("includeDeleted")] = true;
+    m_client->sendRequest(QStringLiteral("pile_list"), payload,
                           [this](int code, const QString &, const QJsonObject &data) {
                               if (code != 0)
                                   return;
@@ -112,9 +127,11 @@ void PileManagePage::refresh()
                               m_table->setRowCount(piles.size());
                               for (int row = 0; row < piles.size(); ++row) {
                                   const QJsonObject p = piles.at(row).toObject();
+                                  const bool deleted = p[QStringLiteral("deleted")].toBool();
 
                                   QTableWidgetItem *codeItem = new QTableWidgetItem(p[QStringLiteral("code")].toString());
                                   codeItem->setData(Qt::UserRole, p[QStringLiteral("pileId")].toInt());
+                                  codeItem->setData(Qt::UserRole + 1, deleted);
                                   m_table->setItem(row, 0, codeItem);
                                   m_table->setItem(row, 1, new QTableWidgetItem(p[QStringLiteral("stationName")].toString()));
 
@@ -129,8 +146,11 @@ void PileManagePage::refresh()
                                   m_table->setItem(row, 3, powerItem);
 
                                   const QString status = p[QStringLiteral("status")].toString();
-                                  QTableWidgetItem *statusItem = new QTableWidgetItem(UiEnums::pileStatusText(status));
-                                  statusItem->setForeground(UiEnums::pileStatusColor(status));
+                                  // 已删除电桩状态列固定显示「已删除」（色板文本-次色），原始状态保留在 UserRole
+                                  QTableWidgetItem *statusItem = new QTableWidgetItem(
+                                      deleted ? UiEnums::recordStatusText(true) : UiEnums::pileStatusText(status));
+                                  statusItem->setForeground(deleted ? UiEnums::recordStatusColor(true)
+                                                                    : UiEnums::pileStatusColor(status));
                                   statusItem->setData(Qt::UserRole, status);
                                   m_table->setItem(row, 4, statusItem);
 

@@ -11,6 +11,7 @@ TEMPLATE = app
 SOURCES += \
     main.cpp \
     net/socketclient.cpp \
+    ui/adminmanagedialog.cpp \
     ui/loginwindow.cpp \
     ui/mainwindow.cpp \
     ui/orderpage.cpp \
@@ -22,6 +23,7 @@ SOURCES += \
 
 HEADERS += \
     net/socketclient.h \
+    ui/adminmanagedialog.h \
     ui/loginwindow.h \
     ui/mainwindow.h \
     ui/orderpage.h \
