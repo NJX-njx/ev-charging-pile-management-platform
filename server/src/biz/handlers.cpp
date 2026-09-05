@@ -88,6 +88,18 @@ bool readDate(const QJsonObject &p, const QString &key, QDate &out, bool &presen
     return true;
 }
 
+// Optional includeDeleted flag (v2.2, admin lists only): absent means false.
+bool readIncludeDeleted(const QJsonObject &p, bool &out)
+{
+    out = false;
+    if (!p.contains(QStringLiteral("includeDeleted")))
+        return true;
+    if (!p.value(QStringLiteral("includeDeleted")).isBool())
+        return false;
+    out = p.value(QStringLiteral("includeDeleted")).toBool();
+    return true;
+}
+
 enum class CodeCheck { Ok, Mismatch, DbError };
 
 // One-time SMS-style code: consumed on success; expired rows are removed lazily.
@@ -189,11 +201,21 @@ Response hUserLogin(const QJsonObject &p, Session &s, QSqlDatabase db)
             return fail(1001, QStringLiteral("invalid credentials"));
     }
     if (!found) {
+        // v2.2：密码方式自动注册直接保存该密码（hasPassword=true）；
+        // 验证码方式注册不设置密码（null QString 绑定为 SQL NULL）。
+        QString passwordHash;
+        if (byPassword) {
+            const QString password = p.value(QStringLiteral("password")).toString();
+            if (!Protocol::isValidPassword(password))
+                return fail(2001, QStringLiteral("invalid password"));
+            passwordHash = Protocol::passwordRecord(password);
+        }
         QSqlQuery ins(db);
-        ins.prepare(QStringLiteral("INSERT INTO users (phone, nickname, balanceFen, status, regTime)"
-                                   " VALUES (?, ?, 0, 'normal', ?)"));
+        ins.prepare(QStringLiteral("INSERT INTO users (phone, nickname, balanceFen, status,"
+                                   " passwordHash, regTime) VALUES (?, ?, 0, 'normal', ?, ?)"));
         ins.addBindValue(phone);
         ins.addBindValue(QStringLiteral("用户") + phone.right(4));
+        ins.addBindValue(passwordHash);
         ins.addBindValue(TimeUtil::nowSecs());
         if (!exec(ins))
             return fail(5000, QStringLiteral("internal error"));
@@ -522,15 +544,15 @@ Response hActiveOrder(const QJsonObject &, Session &s, QSqlDatabase db)
     q.prepare(QString::fromLatin1(Protocol::kOrderSelect)
               + QStringLiteral(" WHERE o.userId = ?"
                                " AND o.status IN ('reserved', 'charging', 'pending_payment')"
-                               " ORDER BY o.orderId DESC LIMIT 1"));
+                               " ORDER BY o.reservedAt DESC, o.orderId DESC"));
     q.addBindValue(s.userId);
     if (!exec(q))
         return fail(5000, QStringLiteral("internal error"));
+    QJsonArray orders;
+    while (q.next())
+        orders.append(Protocol::orderJson(q));
     QJsonObject data;
-    if (q.next())
-        data.insert(QStringLiteral("order"), Protocol::orderJson(q));
-    else
-        data.insert(QStringLiteral("order"), QJsonValue::Null);
+    data.insert(QStringLiteral("orders"), orders);
     return ok(data);
 }
 
@@ -552,18 +574,7 @@ Response hReserve(const QJsonObject &p, Session &s, QSqlDatabase db)
         db.rollback();
         return fail(3004, QStringLiteral("balance too low, please recharge first"));
     }
-    QSqlQuery q(db);
-    q.prepare(QStringLiteral("SELECT orderId FROM orders WHERE userId = ?"
-                             " AND status IN ('reserved', 'charging', 'pending_payment') LIMIT 1"));
-    q.addBindValue(s.userId);
-    if (!exec(q)) {
-        db.rollback();
-        return fail(5000, QStringLiteral("internal error"));
-    }
-    if (q.next()) {
-        db.rollback();
-        return fail(3005, QStringLiteral("unfinished order exists"));
-    }
+    // v2.2：允许同一用户同时拥有多个未完成订单（3005 已废弃，不再检查）。
     QSqlQuery pq(db);
     pq.prepare(QStringLiteral("SELECT p.status, p.stationId, s.priceFenPerKwh"
                               " FROM piles p JOIN stations s ON s.stationId = p.stationId"
@@ -856,12 +867,19 @@ Response hPileList(const QJsonObject &p, Session &, QSqlDatabase db)
             && status != QLatin1String("fault"))
             return fail(2001, QStringLiteral("invalid status"));
     }
-    QString sql = QString::fromLatin1(Protocol::kPileSelect)
-        + QStringLiteral(" WHERE p.deleted = 0");
+    bool includeDeleted = false;
+    if (!readIncludeDeleted(p, includeDeleted))
+        return fail(2001, QStringLiteral("invalid includeDeleted"));
+    QStringList conditions;
+    if (!includeDeleted)
+        conditions.append(QStringLiteral("p.deleted = 0"));
     if (stationId > 0)
-        sql += QStringLiteral(" AND p.stationId = ?");
+        conditions.append(QStringLiteral("p.stationId = ?"));
     if (!status.isEmpty())
-        sql += QStringLiteral(" AND p.status = ?");
+        conditions.append(QStringLiteral("p.status = ?"));
+    QString sql = QString::fromLatin1(Protocol::kPileSelect);
+    if (!conditions.isEmpty())
+        sql += QStringLiteral(" WHERE ") + conditions.join(QStringLiteral(" AND "));
     sql += QStringLiteral(" ORDER BY p.stationId, p.code");
     QSqlQuery q(db);
     q.prepare(sql);
@@ -872,8 +890,12 @@ Response hPileList(const QJsonObject &p, Session &, QSqlDatabase db)
     if (!exec(q))
         return fail(5000, QStringLiteral("internal error"));
     QJsonArray piles;
-    while (q.next())
-        piles.append(Protocol::pileJson(q));
+    while (q.next()) {
+        QJsonObject pile = Protocol::pileJson(q);
+        if (includeDeleted)
+            pile.insert(QStringLiteral("deleted"), q.value(9).toInt() != 0);
+        piles.append(pile);
+    }
     QJsonObject data;
     data.insert(QStringLiteral("piles"), piles);
     return ok(data);
@@ -1065,9 +1087,17 @@ Response hStationList(const QJsonObject &p, Session &, QSqlDatabase db)
             return fail(2001, QStringLiteral("invalid nameKeyword"));
         keyword = p.value(QStringLiteral("nameKeyword")).toString();
     }
-    QString where = QStringLiteral(" WHERE s.deleted = 0");
+    bool includeDeleted = false;
+    if (!readIncludeDeleted(p, includeDeleted))
+        return fail(2001, QStringLiteral("invalid includeDeleted"));
+    QStringList conditions;
+    if (!includeDeleted)
+        conditions.append(QStringLiteral("s.deleted = 0"));
     if (!keyword.isEmpty())
-        where += QStringLiteral(" AND s.name LIKE ?");
+        conditions.append(QStringLiteral("s.name LIKE ?"));
+    QString where;
+    if (!conditions.isEmpty())
+        where = QStringLiteral(" WHERE ") + conditions.join(QStringLiteral(" AND "));
     QSqlQuery count(db);
     count.prepare(QStringLiteral("SELECT COUNT(*) FROM stations s") + where);
     if (!keyword.isEmpty())
@@ -1085,8 +1115,12 @@ Response hStationList(const QJsonObject &p, Session &, QSqlDatabase db)
     if (!exec(q))
         return fail(5000, QStringLiteral("internal error"));
     QJsonArray stations;
-    while (q.next())
-        stations.append(Protocol::stationSummaryJson(q));
+    while (q.next()) {
+        QJsonObject station = Protocol::stationSummaryJson(q);
+        if (includeDeleted)
+            station.insert(QStringLiteral("deleted"), q.value(9).toInt() != 0);
+        stations.append(station);
+    }
     QJsonObject data;
     data.insert(QStringLiteral("page"), page);
     data.insert(QStringLiteral("pageSize"), pageSize);
@@ -1302,10 +1336,17 @@ Response hUserList(const QJsonObject &p, Session &, QSqlDatabase db)
         if (!keyword.isEmpty() && !digits.match(keyword).hasMatch())
             return fail(2001, QStringLiteral("invalid phoneKeyword"));
     }
-    QString sql = QString::fromLatin1(Protocol::kUserSelect);
-    sql += QStringLiteral(" WHERE deleted = 0");
+    bool includeDeleted = false;
+    if (!readIncludeDeleted(p, includeDeleted))
+        return fail(2001, QStringLiteral("invalid includeDeleted"));
+    QStringList conditions;
+    if (!includeDeleted)
+        conditions.append(QStringLiteral("deleted = 0"));
     if (!keyword.isEmpty())
-        sql += QStringLiteral(" AND phone LIKE ?");
+        conditions.append(QStringLiteral("phone LIKE ?"));
+    QString sql = QString::fromLatin1(Protocol::kUserSelect);
+    if (!conditions.isEmpty())
+        sql += QStringLiteral(" WHERE ") + conditions.join(QStringLiteral(" AND "));
     sql += QStringLiteral(" ORDER BY userId");
     QSqlQuery q(db);
     q.prepare(sql);
@@ -1314,8 +1355,12 @@ Response hUserList(const QJsonObject &p, Session &, QSqlDatabase db)
     if (!exec(q))
         return fail(5000, QStringLiteral("internal error"));
     QJsonArray users;
-    while (q.next())
-        users.append(Protocol::userJson(q, false));
+    while (q.next()) {
+        QJsonObject user = Protocol::userJson(q, false);
+        if (includeDeleted)
+            user.insert(QStringLiteral("deleted"), q.value(9).toInt() != 0);
+        users.append(user);
+    }
     QJsonObject data;
     data.insert(QStringLiteral("users"), users);
     return ok(data);
@@ -1655,6 +1700,90 @@ Response hAdminOrderDetail(const QJsonObject &p, Session &, QSqlDatabase db)
     return ok(data);
 }
 
+Response hAdminList(const QJsonObject &, Session &, QSqlDatabase db)
+{
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral("SELECT adminId, username FROM admins ORDER BY adminId"));
+    if (!exec(q))
+        return fail(5000, QStringLiteral("internal error"));
+    QJsonArray admins;
+    while (q.next()) {
+        QJsonObject admin;
+        admin.insert(QStringLiteral("adminId"), q.value(0).toLongLong());
+        admin.insert(QStringLiteral("username"), q.value(1).toString());
+        admins.append(admin);
+    }
+    QJsonObject data;
+    data.insert(QStringLiteral("admins"), admins);
+    return ok(data);
+}
+
+Response hAdminAdd(const QJsonObject &p, Session &, QSqlDatabase db)
+{
+    if (!p.value(QStringLiteral("username")).isString())
+        return fail(2001, QStringLiteral("invalid username"));
+    const QString username = p.value(QStringLiteral("username")).toString().trimmed();
+    if (username.isEmpty() || username.length() > 20)
+        return fail(2001, QStringLiteral("invalid username"));
+    if (!p.value(QStringLiteral("password")).isString()
+        || !Protocol::isValidPassword(p.value(QStringLiteral("password")).toString()))
+        return fail(2001, QStringLiteral("invalid password"));
+    const QString password = p.value(QStringLiteral("password")).toString();
+    QSqlQuery dup(db);
+    dup.prepare(QStringLiteral("SELECT COUNT(*) FROM admins WHERE username = ?"));
+    dup.addBindValue(username);
+    if (!exec(dup) || !dup.next())
+        return fail(5000, QStringLiteral("internal error"));
+    if (dup.value(0).toLongLong() > 0)
+        return fail(2001, QStringLiteral("username already exists"));
+    QSqlQuery ins(db);
+    ins.prepare(QStringLiteral("INSERT INTO admins (username, passwordHash) VALUES (?, ?)"));
+    ins.addBindValue(username);
+    ins.addBindValue(Protocol::passwordRecord(password));
+    if (!ins.exec()) {
+        // 并发插入撞上 username 的 UNIQUE 约束同样按冲突处理。
+        if (ins.lastError().text().contains(QLatin1String("UNIQUE")))
+            return fail(2001, QStringLiteral("username already exists"));
+        qWarning() << "SQL error:" << ins.lastError().text();
+        return fail(5000, QStringLiteral("internal error"));
+    }
+    QJsonObject data;
+    data.insert(QStringLiteral("adminId"), ins.lastInsertId().toLongLong());
+    data.insert(QStringLiteral("username"), username);
+    return ok(data);
+}
+
+Response hAdminDelete(const QJsonObject &p, Session &s, QSqlDatabase db)
+{
+    qint64 adminId = 0;
+    if (!Protocol::readInt(p, QStringLiteral("adminId"), 1, kMaxId, adminId))
+        return fail(2001, QStringLiteral("invalid adminId"));
+    if (adminId == s.adminId)
+        return fail(3002, QStringLiteral("cannot delete the logged-in account"));
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral("SELECT adminId FROM admins WHERE adminId = ?"));
+    q.addBindValue(adminId);
+    if (!exec(q))
+        return fail(5000, QStringLiteral("internal error"));
+    if (!q.next())
+        return fail(2002, QStringLiteral("admin not found"));
+    QSqlQuery count(db);
+    count.prepare(QStringLiteral("SELECT COUNT(*) FROM admins"));
+    if (!exec(count) || !count.next())
+        return fail(5000, QStringLiteral("internal error"));
+    if (count.value(0).toLongLong() <= 1)
+        return fail(3002, QStringLiteral("cannot delete the last admin"));
+    QSqlQuery del(db);
+    del.prepare(QStringLiteral("DELETE FROM admins WHERE adminId = ?"));
+    del.addBindValue(adminId);
+    if (!exec(del))
+        return fail(5000, QStringLiteral("internal error"));
+    QJsonObject data;
+    data.insert(QStringLiteral("adminId"), adminId);
+    data.insert(QStringLiteral("deleted"), true);
+    return ok(data);
+}
+
 using Handler = Response (*)(const QJsonObject &, Session &, QSqlDatabase );
 
 struct MessageDef {
@@ -1704,6 +1833,9 @@ const QHash<QString, MessageDef> &messageTable()
         {QStringLiteral("user_delete"), {2, hUserDelete}},
         {QStringLiteral("admin_order_list"), {2, hAdminOrderList}},
         {QStringLiteral("admin_order_detail"), {2, hAdminOrderDetail}},
+        {QStringLiteral("admin_list"), {2, hAdminList}},
+        {QStringLiteral("admin_add"), {2, hAdminAdd}},
+        {QStringLiteral("admin_delete"), {2, hAdminDelete}},
     };
     return table;
 }
