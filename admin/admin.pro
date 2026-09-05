@@ -11,25 +11,25 @@ TEMPLATE = app
 SOURCES += \
     main.cpp \
     net/socketclient.cpp \
+    ui/filtertable.cpp \
     ui/loginwindow.cpp \
     ui/mainwindow.cpp \
     ui/orderpage.cpp \
-    ui/pilemanagepage.cpp \
     ui/pilestatuspage.cpp \
     ui/salespage.cpp \
-    ui/stationpage.cpp \
+    ui/stationpilepage.cpp \
     ui/systempage.cpp \
     ui/userpage.cpp
 
 HEADERS += \
     net/socketclient.h \
+    ui/filtertable.h \
     ui/loginwindow.h \
     ui/mainwindow.h \
     ui/orderpage.h \
-    ui/pilemanagepage.h \
     ui/pilestatuspage.h \
     ui/salespage.h \
-    ui/stationpage.h \
+    ui/stationpilepage.h \
     ui/systempage.h \
     ui/uienums.h \
     ui/userpage.h

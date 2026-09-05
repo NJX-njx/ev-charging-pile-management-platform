@@ -18,7 +18,7 @@ QListWidget#listWidgetNav {
 }
 QListWidget#listWidgetNav::item {
     color: #1F2329;
-    padding: 10px 12px;
+    padding: 8px 12px;
     border-left: 4px solid transparent;
 }
 QListWidget#listWidgetNav::item:selected {
