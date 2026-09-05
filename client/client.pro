@@ -26,7 +26,9 @@ SOURCES += \
     src/pages/passworddialog.cpp \
     src/pages/findstationpage.cpp \
     src/pages/chargingpage.cpp \
-    src/pages/mypage.cpp
+    src/pages/mypage.cpp \
+    src/pages/rechargedialog.cpp \
+    src/pages/navigationdialog.cpp
 
 HEADERS += \
     src/mainwindow.h \
@@ -42,6 +44,8 @@ HEADERS += \
     src/pages/passworddialog.h \
     src/pages/findstationpage.h \
     src/pages/chargingpage.h \
-    src/pages/mypage.h
+    src/pages/mypage.h \
+    src/pages/rechargedialog.h \
+    src/pages/navigationdialog.h
 
 RESOURCES += resources/resources.qrc

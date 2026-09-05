@@ -18,9 +18,12 @@ public:
 
     void setUser(const UserInfo &user);
     void refreshProfile();
+    void reloadOrders();
+    void openRechargeDialog();
 
 signals:
     void logoutRequested();
+    void balanceChanged(double balance);
 
 protected:
     void showEvent(QShowEvent *event) override;
@@ -28,7 +31,6 @@ protected:
 private:
     void onChangeAvatar();
     void onSaveNickname();
-    void onRecharge();
     void onLoadMoreOrders();
     void renderProfile();
     void appendOrders(const QList<Order> &orders);
@@ -46,7 +48,6 @@ private:
     QLabel *m_phoneLabel;
 
     QLabel *m_balanceLabel;
-    QLineEdit *m_amountEdit;
     QPushButton *m_rechargeButton;
 
     QWidget *m_ordersContainer;

@@ -159,7 +159,8 @@ void SocketClient::setPending(qint64 seq, const ResponseCallback &cb)
     connect(timer, &QTimer::timeout, this, [this, seq]() {
         ResponseCallback cb = takePending(seq);
         if (cb)
-            cb(kErrTimeout, QStringLiteral("请求超时，请稍后重试或刷新状态"), QJsonObject{});
+            invokeCallback(cb, kErrTimeout, QStringLiteral("请求超时，请稍后重试或刷新状态"),
+                           QJsonObject{});
     });
     timer->start();
 }
@@ -181,8 +182,20 @@ void SocketClient::failAllPending(int code, const QString &msg)
     for (qint64 seq : seqs) {
         ResponseCallback cb = takePending(seq);
         if (cb)
-            cb(code, msg, QJsonObject{});
+            invokeCallback(cb, code, msg, QJsonObject{});
     }
+}
+
+// 业务回调一律排队到下一轮事件循环再执行：回调里经常会弹模态框/嵌套事件循环，
+// 若直接在 readyRead/disconnected 等 SocketClient 信号处理栈内执行，readyRead
+// 在槽返回前不会再次发射（Qt 不递归发射），后续服务端响应会被饿死，进而引发
+// 请求超时、按钮卡死，以及回调访问已销毁对象的崩溃。
+void SocketClient::invokeCallback(const ResponseCallback &cb, int code, const QString &msg,
+                                  const QJsonObject &data)
+{
+    QTimer::singleShot(0, this, [cb, code, msg, data]() {
+        cb(code, msg, data);
+    });
 }
 
 void SocketClient::onReadyRead()
@@ -229,7 +242,7 @@ void SocketClient::handleLine(const QByteArray &line)
         emit protocolError(QStringLiteral("收到未匹配的响应 seq=%1").arg(seq));
         return;
     }
-    cb(code, msg, dataVal.isObject() ? dataVal.toObject() : QJsonObject{});
+    invokeCallback(cb, code, msg, dataVal.isObject() ? dataVal.toObject() : QJsonObject{});
 }
 
 void SocketClient::onDisconnected()

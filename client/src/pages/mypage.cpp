@@ -19,6 +19,7 @@
 
 #include "net/socketclient.h"
 #include "pages/passworddialog.h"
+#include "pages/rechargedialog.h"
 #include "ui/uienums.h"
 
 namespace {
@@ -133,11 +134,11 @@ MyPage::MyPage(SocketClient *client, QWidget *parent)
     walletLayout->addWidget(walletTitle);
     walletLayout->addWidget(m_balanceLabel);
     auto *rechargeRow = new QHBoxLayout();
-    m_amountEdit = new QLineEdit(walletCard);
-    m_amountEdit->setPlaceholderText(QStringLiteral("充值金额（≤10000，最多两位小数）"));
+    auto *rechargeHint = new QLabel(QStringLiteral("支持预设档位与自定义金额"), walletCard);
+    rechargeHint->setObjectName(QStringLiteral("hint"));
     m_rechargeButton = new QPushButton(QStringLiteral("充值"), walletCard);
     m_rechargeButton->setProperty("class", QStringLiteral("smallPrimary"));
-    rechargeRow->addWidget(m_amountEdit, 1);
+    rechargeRow->addWidget(rechargeHint, 1);
     rechargeRow->addWidget(m_rechargeButton, 0);
     walletLayout->addLayout(rechargeRow);
     layout->addWidget(walletCard);
@@ -188,7 +189,7 @@ MyPage::MyPage(SocketClient *client, QWidget *parent)
     });
     connect(m_saveNicknameButton, &QPushButton::clicked, this, &MyPage::onSaveNickname);
     connect(m_avatarButton, &QPushButton::clicked, this, &MyPage::onChangeAvatar);
-    connect(m_rechargeButton, &QPushButton::clicked, this, &MyPage::onRecharge);
+    connect(m_rechargeButton, &QPushButton::clicked, this, &MyPage::openRechargeDialog);
     connect(m_loadMoreButton, &QPushButton::clicked, this, &MyPage::onLoadMoreOrders);
     connect(m_logoutButton, &QPushButton::clicked, this, [this]() {
         const auto choice = QMessageBox::question(this, QStringLiteral("退出登录"),
@@ -210,8 +211,18 @@ void MyPage::setUser(const UserInfo &user)
 void MyPage::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
-    if (m_hasUser && m_client->isLoggedIn())
+    if (m_hasUser && m_client->isLoggedIn()) {
         refreshProfile();
+        reloadOrders();
+    }
+}
+
+void MyPage::reloadOrders()
+{
+    if (m_loadingOrders || !m_client->isConnected())
+        return;
+    resetOrders();
+    onLoadMoreOrders();
 }
 
 void MyPage::refreshProfile()
@@ -234,6 +245,7 @@ void MyPage::renderProfile()
                               .arg(m_user.phone, ui::userStatusText(m_user.status)));
     m_nicknameEdit->setText(m_user.nickname);
     m_balanceLabel->setText(QStringLiteral("¥%1").arg(m_user.balance, 0, 'f', 2));
+    emit balanceChanged(m_user.balance);
     if (m_user.hasAvatar) {
         QPixmap pix;
         if (pix.loadFromData(m_user.avatarBytes))
@@ -312,43 +324,17 @@ void MyPage::onChangeAvatar()
                           });
 }
 
-void MyPage::onRecharge()
+void MyPage::openRechargeDialog()
 {
-    static const QRegularExpression amountRe(QStringLiteral("^[0-9]+(\\.[0-9]{1,2})?$"));
-    const QString text = m_amountEdit->text().trimmed();
-    if (!amountRe.match(text).hasMatch()) {
-        QMessageBox::warning(this, QStringLiteral("充值"),
-                             QStringLiteral("金额格式不正确，最多两位小数"));
+    if (!m_client->isLoggedIn())
         return;
-    }
-    const double amount = text.toDouble();
-    if (amount <= 0 || amount > 10000) {
-        QMessageBox::warning(this, QStringLiteral("充值"),
-                             QStringLiteral("充值金额须大于 0 且不超过 10000"));
-        return;
-    }
-    m_rechargeButton->setEnabled(false);
-    m_client->sendRequest(QStringLiteral("wallet_recharge"),
-                          QJsonObject{{QStringLiteral("amount"), amount}},
-                          [this](int code, const QString &msg, const QJsonObject &data) {
-                              m_rechargeButton->setEnabled(true);
-                              if (code == SocketClient::kErrConnectionLost) {
-                                  QMessageBox::warning(this, QStringLiteral("充值"),
-                                                       QStringLiteral("网络中断，充值结果未知，请刷新余额确认后再决定是否重新充值"));
-                                  refreshProfile();
-                                  return;
-                              }
-                              if (code != 0) {
-                                  QMessageBox::warning(this, QStringLiteral("充值"),
-                                                       msg.isEmpty() ? QStringLiteral("充值失败") : msg);
-                                  return;
-                              }
-                              m_user.balance = data.value(QStringLiteral("balance")).toDouble();
-                              m_balanceLabel->setText(QStringLiteral("¥%1").arg(m_user.balance, 0, 'f', 2));
-                              m_amountEdit->clear();
-                              QMessageBox::information(this, QStringLiteral("充值"),
-                                                       QStringLiteral("充值成功，当前余额 ¥%1").arg(m_user.balance, 0, 'f', 2));
-                          });
+    RechargeDialog dlg(m_client, this);
+    connect(&dlg, &RechargeDialog::recharged, this, [this](double newBalance) {
+        m_user.balance = newBalance;
+        m_balanceLabel->setText(QStringLiteral("¥%1").arg(m_user.balance, 0, 'f', 2));
+        emit balanceChanged(m_user.balance);
+    });
+    dlg.exec();
 }
 
 void MyPage::resetOrders()
