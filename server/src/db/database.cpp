@@ -17,7 +17,7 @@ const char *const kSchema[] = {
     " passwordHash TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS users ("
     " userId INTEGER PRIMARY KEY AUTOINCREMENT,"
-    " phone TEXT NOT NULL UNIQUE,"
+    " phone TEXT NOT NULL,"
     " nickname TEXT NOT NULL,"
     " balanceFen INTEGER NOT NULL DEFAULT 0,"
     " status TEXT NOT NULL DEFAULT 'normal',"
@@ -114,6 +114,72 @@ bool ensureColumn(QSqlDatabase &db, const char *table, const char *column,
     return true;
 }
 
+// Rebuilds the users table when it still carries the pre-v2.1 `phone TEXT UNIQUE`
+// column constraint (visible as a sqlite_autoindex on users): SQLite cannot drop a
+// column UNIQUE constraint in place, so copy into a fresh table and swap names.
+// Phone uniqueness is then enforced only among non-deleted rows by
+// idx_users_phone_active, letting a deleted user's phone be registered again.
+// Runs after the ensureColumn migrations so every source column exists; on a
+// database without the autoindex (fresh or already migrated) it is a no-op.
+bool rebuildUsersWithoutPhoneUnique(QSqlDatabase &db, QString *errorMessage)
+{
+    QSqlQuery q(db);
+    if (!q.exec(QStringLiteral("SELECT name FROM sqlite_master WHERE type = 'index'"
+                               " AND tbl_name = 'users' AND name LIKE 'sqlite_autoindex%'"))) {
+        if (errorMessage)
+            *errorMessage = q.lastError().text();
+        return false;
+    }
+    if (!q.next())
+        return true;
+    // foreign_keys is a no-op inside a transaction, so toggle it outside; orders
+    // references users and would otherwise abort the DROP.
+    if (!q.exec(QStringLiteral("PRAGMA foreign_keys=OFF"))) {
+        if (errorMessage)
+            *errorMessage = q.lastError().text();
+        return false;
+    }
+    static const char *const steps[] = {
+        "CREATE TABLE users_new ("
+        " userId INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " phone TEXT NOT NULL,"
+        " nickname TEXT NOT NULL,"
+        " balanceFen INTEGER NOT NULL DEFAULT 0,"
+        " status TEXT NOT NULL DEFAULT 'normal',"
+        " avatarMime TEXT,"
+        " avatarBase64 TEXT,"
+        " passwordHash TEXT,"
+        " deleted INTEGER NOT NULL DEFAULT 0,"
+        " regTime INTEGER NOT NULL)",
+        "INSERT INTO users_new SELECT userId, phone, nickname, balanceFen, status,"
+        " avatarMime, avatarBase64, passwordHash, deleted, regTime FROM users",
+        "DROP TABLE users",
+        "ALTER TABLE users_new RENAME TO users",
+    };
+    bool ok = db.transaction();
+    if (!ok && errorMessage)
+        *errorMessage = db.lastError().text();
+    for (const char *step : steps) {
+        if (ok && !q.exec(QLatin1String(step))) {
+            ok = false;
+            if (errorMessage)
+                *errorMessage = q.lastError().text();
+        }
+    }
+    if (ok)
+        ok = db.commit();
+    if (!ok && errorMessage && errorMessage->isEmpty())
+        *errorMessage = db.lastError().text();
+    if (!ok)
+        db.rollback();
+    if (!q.exec(QStringLiteral("PRAGMA foreign_keys=ON"))) {
+        if (ok && errorMessage)
+            *errorMessage = q.lastError().text();
+        return false;
+    }
+    return ok;
+}
+
 void Database::configure(const QString &path)
 {
     g_dbPath = path;
@@ -172,6 +238,14 @@ bool Database::initialize(QString *errorMessage)
         if (!ensureColumn(db, migration.table, migration.column, migration.definition,
                           errorMessage))
             return false;
+    }
+    if (!rebuildUsersWithoutPhoneUnique(db, errorMessage))
+        return false;
+    if (!q.exec(QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone_active"
+                               " ON users(phone) WHERE deleted = 0"))) {
+        if (errorMessage)
+            *errorMessage = q.lastError().text();
+        return false;
     }
     if (!q.exec(QStringLiteral("SELECT COUNT(*) FROM admins")) || !q.next()) {
         if (errorMessage)
