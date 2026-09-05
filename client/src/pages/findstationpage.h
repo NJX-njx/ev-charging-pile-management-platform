@@ -18,13 +18,18 @@ class FindStationPage : public QWidget
 public:
     explicit FindStationPage(SocketClient *client, QWidget *parent = nullptr);
 
+    // 本地缓存的用户余额（元）；<0 表示未知（未拉取过资料），此时交由服务端 3004 兜底
+    void setKnownBalance(double balance);
+
 signals:
     void orderStateDirty();
+    void requestRecharge();
 
 private:
     void onGeocodeClicked();
     void onSearchClicked();
     void onRefreshClicked();
+    void onNavigateToStation(const Station &station);
     void searchNearby(double lng, double lat);
     void showStationDetail(const Station &station);
     void reservePile(qint64 pileId, const QString &pileCode, QDialog *dialog);
@@ -45,4 +50,5 @@ private:
     bool m_hasLastCoord = false;
     double m_lastLng = 0.0;
     double m_lastLat = 0.0;
+    double m_knownBalance = -1.0;
 };

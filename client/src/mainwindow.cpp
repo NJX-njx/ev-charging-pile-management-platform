@@ -80,6 +80,7 @@ MainWindow::MainWindow(const AppConfig &config, QWidget *parent)
 
     connect(m_loginPage, &LoginPage::loginSuccess, this, [this](const UserInfo &user, bool) {
         m_myPage->setUser(user);
+        m_findPage->setKnownBalance(user.balance);
         m_stack->setCurrentWidget(m_mainPage);
         switchTab(0);
         m_chargingPage->refresh();
@@ -129,7 +130,13 @@ MainWindow::MainWindow(const AppConfig &config, QWidget *parent)
     });
     connect(m_chargingPage, &ChargingPage::requestRecharge, this, [this]() {
         switchTab(2);
+        m_myPage->openRechargeDialog();
     });
+    connect(m_findPage, &FindStationPage::requestRecharge, this, [this]() {
+        switchTab(2);
+        m_myPage->openRechargeDialog();
+    });
+    connect(m_myPage, &MyPage::balanceChanged, m_findPage, &FindStationPage::setKnownBalance);
     connect(m_myPage, &MyPage::logoutRequested, this, [this]() {
         m_client->logout();
         m_stack->setCurrentWidget(m_loginPage);

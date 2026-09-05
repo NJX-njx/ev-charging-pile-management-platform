@@ -16,7 +16,10 @@
 
 #include "map/mapbridge.h"
 #include "net/socketclient.h"
+#include "pages/navigationdialog.h"
 #include "ui/uienums.h"
+
+#include <QPointer>
 
 namespace {
 
@@ -43,6 +46,12 @@ public:
             dist->setObjectName(QStringLiteral("emphasis"));
             topRow->addWidget(dist, 0);
         }
+        auto *navButton = new QPushButton(QStringLiteral("导航"), this);
+        navButton->setProperty("class", QStringLiteral("small"));
+        connect(navButton, &QPushButton::clicked, this, [this]() {
+            emit navigateClicked();
+        });
+        topRow->addWidget(navButton, 0);
         layout->addLayout(topRow);
 
         auto *addr = new QLabel(station.address, this);
@@ -63,6 +72,7 @@ public:
 
 signals:
     void clicked();
+    void navigateClicked();
 
 protected:
     void mouseReleaseEvent(QMouseEvent *event) override
@@ -251,6 +261,9 @@ void FindStationPage::renderStations(const QList<Station> &stations)
         connect(card, &StationCard::clicked, this, [this, s]() {
             showStationDetail(s);
         });
+        connect(card, &StationCard::navigateClicked, this, [this, s]() {
+            onNavigateToStation(s);
+        });
         m_listLayout->addWidget(card);
     }
     m_listLayout->addStretch(1);
@@ -273,6 +286,9 @@ void FindStationPage::showStationDetail(const Station &station)
                               for (const QJsonValue &v : arr)
                                   piles.append(Pile::fromJson(v.toObject()));
 
+                              // 非模态展示：不得在响应回调里 exec() 嵌套事件循环
+                              // （回调栈在 SocketClient::onReadyRead 内时，嵌套循环会
+                              // 饿死后续 readyRead，见 SocketClient::invokeCallback）
                               auto *dialog = new QDialog(this);
                               dialog->setAttribute(Qt::WA_DeleteOnClose);
                               dialog->setWindowTitle(detail.name);
@@ -339,37 +355,96 @@ void FindStationPage::showStationDetail(const Station &station)
                               connect(closeBtn, &QPushButton::clicked, dialog, &QDialog::accept);
                               dlgLayout->addWidget(closeBtn);
                               dialog->resize(340, 420);
-                              dialog->exec();
+                              dialog->show();
                           });
 }
 
 void FindStationPage::reservePile(qint64 pileId, const QString &pileCode, QDialog *dialog)
 {
-    const QList<QPushButton *> buttons = dialog->findChildren<QPushButton *>();
-    for (QPushButton *b : buttons)
-        b->setEnabled(false);
+    const QPointer<QDialog> dialogGuard(dialog);
+
+    // 协议 v2.1：预约要求余额 > 0。本地缓存余额已知且为 0 时直接拦截，不发请求
+    //（余额按分量化，<0.005 元即视为 0）；缓存未知（<0）时放行，由服务端 3004 兜底。
+    if (m_knownBalance >= 0.0 && m_knownBalance < 0.005) {
+        QMessageBox::warning(dialog, QStringLiteral("预约"),
+                             QStringLiteral("余额不足，请先充值"));
+        return;
+    }
+
+    if (dialogGuard) {
+        const QList<QPushButton *> buttons = dialogGuard->findChildren<QPushButton *>();
+        for (QPushButton *b : buttons)
+            b->setEnabled(false);
+    }
     m_client->sendRequest(QStringLiteral("charge_reserve"),
                           QJsonObject{{QStringLiteral("pileId"), static_cast<double>(pileId)}},
-                          [this, dialog, pileCode](int code, const QString &msg, const QJsonObject &) {
+                          [this, dialogGuard, pileCode](int code, const QString &msg, const QJsonObject &) {
+                              // 请求在途期间用户可能已关闭详情对话框（WA_DeleteOnClose），
+                              // 所有对对话框的访问必须经 QPointer 判空
                               if (code == 0) {
-                                  QMessageBox::information(dialog, QStringLiteral("预约"),
+                                  QMessageBox::information(dialogGuard ? static_cast<QWidget *>(dialogGuard.data())
+                                                                       : static_cast<QWidget *>(this),
+                                                           QStringLiteral("预约"),
                                                            QStringLiteral("电桩 %1 预约成功").arg(pileCode));
-                                  dialog->accept();
+                                  if (dialogGuard)
+                                      dialogGuard->accept();
                                   emit orderStateDirty();
                                   return;
                               }
                               if (code == SocketClient::kErrConnectionLost) {
-                                  QMessageBox::warning(dialog, QStringLiteral("预约"),
+                                  QMessageBox::warning(dialogGuard ? static_cast<QWidget *>(dialogGuard.data())
+                                                                   : static_cast<QWidget *>(this),
+                                                       QStringLiteral("预约"),
                                                        QStringLiteral("网络中断，预约结果未知，请在充电页确认订单状态"));
-                                  dialog->accept();
+                                  if (dialogGuard)
+                                      dialogGuard->accept();
                                   emit orderStateDirty();
                                   return;
                               }
-                              for (QPushButton *b : dialog->findChildren<QPushButton *>())
-                                  b->setEnabled(true);
-                              QMessageBox::warning(dialog, QStringLiteral("预约"),
+                              if (dialogGuard) {
+                                  const QList<QPushButton *> buttons =
+                                      dialogGuard->findChildren<QPushButton *>();
+                                  for (QPushButton *b : buttons)
+                                      b->setEnabled(true);
+                              }
+                              if (code == 3004) {
+                                  // 与服务端权威余额对齐，后续预约走本地拦截
+                                  m_knownBalance = 0.0;
+                                  QMessageBox::warning(dialogGuard ? static_cast<QWidget *>(dialogGuard.data())
+                                                                   : static_cast<QWidget *>(this),
+                                                       QStringLiteral("预约"),
+                                                       QStringLiteral("余额不足，请先充值"));
+                                  emit requestRecharge();
+                                  return;
+                              }
+                              QMessageBox::warning(dialogGuard ? static_cast<QWidget *>(dialogGuard.data())
+                                                               : static_cast<QWidget *>(this),
+                                                   QStringLiteral("预约"),
                                                    msg.isEmpty() ? QStringLiteral("预约失败") : msg);
                           });
+}
+
+void FindStationPage::onNavigateToStation(const Station &station)
+{
+    if (!NavigationDialog::isAvailable() || !MapBridge::isConfigured()) {
+        QMessageBox::information(this, QStringLiteral("导航"),
+                                 QStringLiteral("当前构建未包含地图组件或未配置腾讯地图 Key，无法导航"));
+        return;
+    }
+    if (!m_hasLastCoord) {
+        QMessageBox::information(this, QStringLiteral("导航"),
+                                 QStringLiteral("请先解析地址或输入经纬度，作为导航起点"));
+        return;
+    }
+    // 非模态 + WA_DeleteOnClose；WebEngine 部件在对话框内懒创建
+    auto *dialog = new NavigationDialog(station.name, m_lastLng, m_lastLat,
+                                        station.lng, station.lat, this);
+    dialog->show();
+}
+
+void FindStationPage::setKnownBalance(double balance)
+{
+    m_knownBalance = balance;
 }
 
 void FindStationPage::setBusy(bool busy)

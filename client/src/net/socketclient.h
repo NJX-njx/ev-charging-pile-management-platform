@@ -49,6 +49,8 @@ private:
     void onSocketError();
     void handleLine(const QByteArray &line);
     void failAllPending(int code, const QString &msg);
+    void invokeCallback(const ResponseCallback &cb, int code, const QString &msg,
+                        const QJsonObject &data);
     void startReconnect();
     void autoRelogin();
     void setPending(qint64 seq, const ResponseCallback &cb);
