@@ -8,6 +8,8 @@
 
 **v2.1（9 月 5 日补充）**：已删除用户的手机号不再占用唯一性，登录时按全新账号自动注册（`1005` 仅用于已删除账号的现存会话）；`charge_reserve` 要求余额大于 `0`，否则返回 `3004`。
 
+**v2.2（9 月 5 日再补充）**：密码方式自动注册时直接保存该密码；允许同一用户同时拥有多个未完成订单（`active_order_get` 改为返回 `orders` 数组，**破坏性变更**，`3005` 废弃）；管理端列表新增 `includeDeleted` 可查看已删除数据；新增管理员账号管理消息（`admin_list`/`admin_add`/`admin_delete`，只能由已登录管理员操作，无公开注册）。
+
 ## 1. 通信边界
 
 | 调用方 | 服务 | 协议 | 默认地址 | 用途 |
@@ -142,17 +144,18 @@
 订单 `Order`：
 
 ```json
-{"orderId":10001,"stationId":1,"stationName":"星海广场站","pileId":101,"pileCode":"P-0101","status":"pending_payment","reservedAt":"2026-09-04T10:00:00+08:00","startTime":"2026-09-04T10:02:00+08:00","endTime":"2026-09-04T10:32:00+08:00","settledAt":null,"energyKwh":20.000,"unitPrice":1.20,"amount":24.00}
+{"orderId":10001,"stationId":1,"stationName":"星海广场站","pileId":101,"pileCode":"P-0101","powerKw":60.0,"status":"pending_payment","reservedAt":"2026-09-04T10:00:00+08:00","startTime":"2026-09-04T10:02:00+08:00","endTime":"2026-09-04T10:32:00+08:00","settledAt":null,"energyKwh":20.000,"unitPrice":1.20,"amount":24.00}
 ```
 
 - `unitPrice` 是预约时保存的站点电价快照，之后站点价格变化不影响该订单。
+- `powerKw` 是关联电桩的当前功率，供客户端估算充电中的预计花费（预计花费 ≈ `powerKw × 已充时长 × unitPrice`，仅为展示用估计值，实际金额以 `charge_stop` 时服务端计算为准）。
 - 尚未发生的时间、能耗和金额字段返回 `null`。
 - 管理端订单消息（`admin_order_list`、`admin_order_detail`）在 `Order` 基础上附加 `userPhone`（下单用户手机号）字段。
 
 ### 3.4 逻辑删除
 
 - 站点、电桩、用户均只做逻辑删除（数据库保留删除标记），禁止物理删除。
-- 被逻辑删除的记录不再出现在任何列表、详情与统计接口中（含 Web 数据大屏）：`nearby_station_list`、`station_list`、`station_detail`、`pile_list`、`pile_status_overview`、`user_list`、`/api/v1/dashboard/overview` 等一律排除。
+- 被逻辑删除的记录不再出现在任何列表、详情与统计接口中（含 Web 数据大屏）：`nearby_station_list`、`station_list`、`station_detail`、`pile_list`、`pile_status_overview`、`user_list`、`/api/v1/dashboard/overview` 等一律排除。管理端的 `station_list`/`pile_list`/`user_list` 支持 `includeDeleted=true` 查看已删除记录（对象附加 `deleted` 字段），仅用于历史数据查看，不提供恢复操作（用户手机号可直接重新注册）。
 - 对已删除目标的操作视为不存在：`station_detail` / `charge_reserve` / `pile_update` 等返回 `2002`。
 - 历史订单数据保留可查：`user_order_list`、`admin_order_list`、`admin_order_detail` 仍返回关联已删除站点/电桩/用户的订单，并正常展示其名称快照。
 - 已删除电桩的编号仍占用唯一性，新增电桩时冲突返回 `2001`；已删除用户的手机号**不再占用唯一性**：该手机号登录或请求验证码时按「手机号不存在」处理（自动注册为全新账号，与原账号的余额、订单无任何关联），但已删除账号的现存会话在下一次业务请求时返回 `1005` 并由服务端关闭连接。
@@ -171,7 +174,7 @@
 | `wallet_recharge` | 用户 | 模拟充值 |
 | `nearby_station_list` | 用户 | 按距离查询附近站点 |
 | `station_detail` | 用户、管理员 | 查询站点及站内电桩 |
-| `active_order_get` | 用户 | 查询未完成订单 |
+| `active_order_get` | 用户 | 查询未完成订单列表（v2.2 起可多订单） |
 | `charge_reserve` | 用户 | 预约空闲电桩 |
 | `charge_start` | 用户 | 开始充电 |
 | `charge_stop` | 用户 | 停止充电并模拟计费 |
@@ -200,6 +203,9 @@
 | `user_delete` | 管理员 | 逻辑删除用户 |
 | `admin_order_list` | 管理员 | 分页组合筛选查询全部订单 |
 | `admin_order_detail` | 管理员 | 订单完整明细 |
+| `admin_list` | 管理员 | 查询管理员账号列表 |
+| `admin_add` | 管理员 | 新增管理员账号（无公开注册） |
+| `admin_delete` | 管理员 | 删除管理员账号 |
 
 ## 5. 通用消息
 
@@ -239,7 +245,7 @@
 {"seq":2,"type":"user_login","code":0,"msg":"ok","data":{"isNew":false,"user":{"userId":1,"phone":"13800001234","nickname":"用户1234","balance":86.50,"regTime":"2026-09-01T10:20:30+08:00","status":"normal","hasPassword":true,"avatar":null}}}
 ```
 
-- 手机号不存在时，服务端自动创建用户（两种认证方式均如此）：默认昵称为“用户”加手机号后 4 位，余额为 `0`，状态为 `normal`，未设置密码（`hasPassword=false`），并返回 `isNew=true`。客户端对 `hasPassword=false` 的用户应引导其设置登录密码（见 `user_password_update`）。
+- 手机号不存在时，服务端自动创建用户（两种认证方式均如此）：默认昵称为“用户”加手机号后 4 位，余额为 `0`，状态为 `normal`，返回 `isNew=true`。**密码方式注册时直接保存该密码**（`hasPassword=true`）；验证码方式注册时未设置密码（`hasPassword=false`），客户端应引导其设置登录密码（见 `user_password_update`）。
 - 验证码方式登录成功即消费该验证码（一次性）。
 - 手机号格式非法返回 `2001`；密码错误或验证码错误/过期/不存在返回 `1001`；账号已冻结返回 `1002`。手机号仅属于已删除用户时按不存在处理（自动注册为全新账号）。`1005` 仅用于已删除账号的现存会话（见 3.4）。
 
@@ -335,19 +341,19 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 {"seq":8,"type":"active_order_get","payload":{}}
 ```
 
-有未完成订单时：
+响应（v2.2 起改为数组，**破坏性变更**）：
 
 ```json
-{"seq":8,"type":"active_order_get","code":0,"msg":"ok","data":{"order":{"orderId":10001,"stationId":1,"stationName":"星海广场站","pileId":101,"pileCode":"P-0101","status":"charging","reservedAt":"2026-09-04T10:00:00+08:00","startTime":"2026-09-04T10:02:00+08:00","endTime":null,"settledAt":null,"energyKwh":null,"unitPrice":1.20,"amount":null}}}
+{"seq":8,"type":"active_order_get","code":0,"msg":"ok","data":{"orders":[{"orderId":10001,"stationId":1,"stationName":"星海广场站","pileId":101,"pileCode":"P-0101","status":"charging","reservedAt":"2026-09-04T10:00:00+08:00","startTime":"2026-09-04T10:02:00+08:00","endTime":null,"settledAt":null,"energyKwh":null,"unitPrice":1.20,"amount":null}]}}
 ```
 
 没有未完成订单时：
 
 ```json
-{"seq":8,"type":"active_order_get","code":0,"msg":"ok","data":{"order":null}}
+{"seq":8,"type":"active_order_get","code":0,"msg":"ok","data":{"orders":[]}}
 ```
 
-`reserved`、`charging` 和 `pending_payment` 都属于未完成订单。每个用户同时最多有一个未完成订单。
+`reserved`、`charging` 和 `pending_payment` 都属于未完成订单。v2.2 起允许同一用户同时拥有多个未完成订单；`orders` 按 `reservedAt` 降序、`orderId` 降序。
 
 ### 6.8 charge_reserve 预约电桩
 
@@ -363,9 +369,9 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 {"seq":9,"type":"charge_reserve","code":0,"msg":"ok","data":{"order":{"orderId":10001,"stationId":1,"stationName":"星海广场站","pileId":101,"pileCode":"P-0101","status":"reserved","reservedAt":"2026-09-04T10:00:00+08:00","startTime":null,"endTime":null,"settledAt":null,"energyKwh":null,"unitPrice":1.20,"amount":null}}}
 ```
 
-- 服务端必须在一个数据库事务中确认用户无未完成订单、电桩为 `idle`、创建订单并把电桩改为 `in_use`。
+- 服务端必须在一个数据库事务中确认电桩为 `idle`、创建订单并把电桩改为 `in_use`。
 - 用户余额必须大于 `0` 才能预约，否则返回 `3004`（客户端引导先充值）。
-- 用户已有未完成订单返回 `3005`；电桩不是 `idle` 返回 `3003`；电桩不存在（含已删除）返回 `2002`。
+- v2.2 起允许同一用户同时拥有多个未完成订单，不再返回 `3005`（该错误码废弃）。电桩不是 `idle` 返回 `3003`；电桩不存在（含已删除）返回 `2002`。
 
 ### 6.9 charge_start 开始充电
 
@@ -591,7 +597,8 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 
 - `stationId` 可省略或为 `0`，表示全部站点；正整数表示按站点筛选。
 - `status` 可省略或为 `null`，表示全部状态；否则必须是电桩状态枚举。
-- 结果按 `stationId`、`code` 升序，不分页，不含已删除电桩。
+- `includeDeleted` 可省略，默认 `false`；为 `true` 时包含已删除电桩，且每个电桩对象附加 `deleted`（bool）字段，仅管理端用于查看历史数据。
+- 结果按 `stationId`、`code` 升序，不分页，默认不含已删除电桩。
 
 ### 7.6 pile_restart 模拟远程重启
 
@@ -626,7 +633,8 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 
 - `page` 默认 `1`，`pageSize` 默认 `20`，范围 1 至 100。
 - `nameKeyword` 可省略或为空字符串，表示全部站点；非空时按站名包含匹配。
-- 结果按 `stationId` 升序，不含已删除站点。查看站内电桩时使用共享消息 `station_detail`。
+- `includeDeleted` 可省略，默认 `false`；为 `true` 时包含已删除站点，且每个站点对象附加 `deleted`（bool）字段，仅管理端用于查看历史数据。
+- 结果按 `stationId` 升序，默认不含已删除站点。查看站内电桩时使用共享消息 `station_detail`。
 
 ### 7.8 station_add 新增站点
 
@@ -660,7 +668,7 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 {"seq":10,"type":"user_list","code":0,"msg":"ok","data":{"users":[{"userId":1,"phone":"13800001234","nickname":"用户1234","balance":86.50,"regTime":"2026-09-01T10:20:30+08:00","status":"normal","hasPassword":true}]}}
 ```
 
-`phoneKeyword` 可省略或为空字符串，表示全部用户；非空时只允许数字并按手机号包含匹配。结果按 `userId` 升序，不返回头像 Base64，不含已删除用户。
+`phoneKeyword` 可省略或为空字符串，表示全部用户；非空时只允许数字并按手机号包含匹配。`includeDeleted` 可省略，默认 `false`；为 `true` 时包含已删除用户，且每个用户对象附加 `deleted`（bool）字段，仅管理端用于查看历史数据。结果按 `userId` 升序，不返回头像 Base64，默认不含已删除用户。
 
 ### 7.10 user_set_status 冻结或解冻用户
 
@@ -886,6 +894,56 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 
 订单不存在返回 `2002`。关联的站点/电桩/用户已被逻辑删除时仍正常返回其数据。
 
+### 7.23 admin_list 管理员账号列表
+
+请求：
+
+```json
+{"seq":15,"type":"admin_list","payload":{}}
+```
+
+响应：
+
+```json
+{"seq":15,"type":"admin_list","code":0,"msg":"ok","data":{"admins":[{"adminId":1,"username":"admin"}]}}
+```
+
+按 `adminId` 升序，不返回任何密码或哈希。
+
+### 7.24 admin_add 新增管理员账号
+
+管理员账号不允许公开注册，只能由已登录管理员添加。
+
+请求：
+
+```json
+{"seq":16,"type":"admin_add","payload":{"username":"ops","password":"abc123"}}
+```
+
+响应：
+
+```json
+{"seq":16,"type":"admin_add","code":0,"msg":"ok","data":{"adminId":2,"username":"ops"}}
+```
+
+`username` 去除首尾空白后长度 1 至 20 且全局唯一，冲突或非法返回 `2001`；`password` 规则同 3.1（6 至 20 位、不含空白字符），非法返回 `2001`。密码以带盐哈希保存。
+
+### 7.25 admin_delete 删除管理员账号
+
+请求：
+
+```json
+{"seq":17,"type":"admin_delete","payload":{"adminId":2}}
+```
+
+响应：
+
+```json
+{"seq":17,"type":"admin_delete","code":0,"msg":"ok","data":{"adminId":2,"deleted":true}}
+```
+
+不允许删除当前登录的本人账号，也不允许删除最后一个管理员账号，均返回 `3002`；账号不存在返回 `2002`。管理员账号无业务数据关联，直接物理删除。
+
 ## 8. Web 数据大屏 HTTP 接口
 
 ### 8.1 通用约定
@@ -998,8 +1056,7 @@ Accept: application/json
 | `3001` | 消息无法解析或类型未知 | JSON 错误、信封错误、未知 `type` |
 | `3002` | 状态冲突 | 订单步骤错误、重启非故障桩、冻结有活动订单的用户、删除有活动订单的用户或有占用电桩的站点 |
 | `3003` | 电桩不可用 | 预约在用或故障电桩 |
-| `3004` | 余额不足 | 结算金额超过钱包余额 |
-| `3005` | 已有未完成订单 | 重复预约 |
+| `3004` | 余额不足 | 结算金额超过钱包余额，或零余额预约 |
 | `4001` | 消息过大 | 超过 2 MiB 或头像超过限制 |
 | `5000` | 服务端内部错误 | 数据库或未预期异常 |
 
@@ -1010,8 +1067,9 @@ Accept: application/json
 - 客户端发送前确保 JSON 是单行 UTF-8，并在末尾追加 `\n`。
 - 服务端为每个 TCP 连接保存独立接收缓冲区、`seq` 关联信息和登录会话。
 - 服务端使用参数化 SQL；用户密码与管理员密码均以带盐哈希保存，不以明文落库；验证码只在服务端内存或专用表中保存，有效期 5 分钟、一次性使用。
+- 密码在 TCP 上以 JSON 明文传输（`user_login`、`admin_login`、`user_password_update` 等消息），仅在本地实训环境可接受；如需网络部署必须叠加 TLS 或在应用层做挑战响应。
 - 预约、取消、结算、批量新增站点、站点删除、电桩与用户增改删等跨表修改必须使用数据库事务。
 - 站点、电桩、用户只做逻辑删除（删除标记），历史订单保留可查；已删除记录不再出现在任何列表与统计中。
 - 时间计算、今日和本月统计统一使用 `Asia/Shanghai`。
 - 管理端与 Web 大屏共享相同统计函数，避免相同指标口径不一致。
-- 联调至少覆盖：粘包、半包、非法 JSON、未知消息、断线重登、重复预约、错误状态顺序、余额不足、冻结账号、已删除账号登录、验证码登录与密码重置、电桩/站点/用户增改删、管理端订单筛选、空列表和数据库异常。
+- 联调至少覆盖：粘包、半包、非法 JSON、未知消息、断线重登、同一用户多未完成订单并行、错误状态顺序、余额不足、冻结账号、已删除账号登录、验证码登录与密码重置、电桩/站点/用户增改删、管理端订单筛选、管理员增删、空列表和数据库异常。
