@@ -2,6 +2,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
@@ -29,7 +30,7 @@ PileManagePage::PileManagePage(SocketClient *client, QWidget *parent)
     QVBoxLayout *root = new QVBoxLayout(this);
 
     QHBoxLayout *controls = new QHBoxLayout;
-    controls->addWidget(new QLabel(QStringLiteral("选中电桩后可执行修改、删除；故障电桩可远程重启（模拟）")));
+    controls->addWidget(new QLabel(QStringLiteral("空闲/故障电桩可远程重启，空闲电桩可禁用；在用行双击可查看占用订单")));
     m_showDeletedCheck = new QCheckBox(QStringLiteral("显示已删除"));
     m_showDeletedCheck->setObjectName(QStringLiteral("checkShowDeleted"));
     controls->addWidget(m_showDeletedCheck);
@@ -46,6 +47,14 @@ PileManagePage::PileManagePage(SocketClient *client, QWidget *parent)
     m_restartBtn = new QPushButton(QStringLiteral("远程重启"));
     m_restartBtn->setEnabled(false);
     controls->addWidget(m_restartBtn);
+    m_disableBtn = new QPushButton(QStringLiteral("禁用"));
+    m_disableBtn->setObjectName(QStringLiteral("btnDisablePile"));
+    m_disableBtn->setEnabled(false);
+    controls->addWidget(m_disableBtn);
+    m_activeOrderBtn = new QPushButton(QStringLiteral("占用详情"));
+    m_activeOrderBtn->setObjectName(QStringLiteral("btnActiveOrder"));
+    m_activeOrderBtn->setEnabled(false);
+    controls->addWidget(m_activeOrderBtn);
     QPushButton *refreshBtn = new QPushButton(QStringLiteral("刷新"));
     controls->addWidget(refreshBtn);
     root->addLayout(controls);
@@ -72,7 +81,15 @@ PileManagePage::PileManagePage(SocketClient *client, QWidget *parent)
     connect(m_editBtn, &QPushButton::clicked, this, &PileManagePage::onEditPile);
     connect(m_deleteBtn, &QPushButton::clicked, this, &PileManagePage::onDeletePile);
     connect(m_restartBtn, &QPushButton::clicked, this, &PileManagePage::onRestartClicked);
+    connect(m_disableBtn, &QPushButton::clicked, this, &PileManagePage::onDisableClicked);
+    connect(m_activeOrderBtn, &QPushButton::clicked, this, &PileManagePage::onShowActiveOrder);
     connect(m_table, &QTableWidget::itemSelectionChanged, this, &PileManagePage::updateActionButtons);
+    // 在用行双击查看占用订单
+    connect(m_table, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
+        QTableWidgetItem *statusItem = m_table->item(row, 4);
+        if (statusItem && statusItem->data(Qt::UserRole).toString() == QStringLiteral("in_use"))
+            onShowActiveOrder();
+    });
     // 兜底：点击当前行不产生选中变化信号时，也要保证该行被选中且按钮状态同步
     connect(m_table, &QTableWidget::clicked, this, [this](const QModelIndex &index) {
         if (index.isValid())
@@ -85,22 +102,28 @@ void PileManagePage::updateActionButtons()
 {
     const auto items = m_table->selectedItems();
     const bool hasSelection = !items.isEmpty();
-    bool canRestart = false;
+    QString status;
     bool deleted = false;
     if (hasSelection) {
         const int row = items.first()->row();
         QTableWidgetItem *statusItem = m_table->item(row, 4);
-        canRestart = statusItem && statusItem->data(Qt::UserRole).toString() == QStringLiteral("fault");
+        status = statusItem ? statusItem->data(Qt::UserRole).toString() : QString();
         deleted = m_table->item(row, 0)->data(Qt::UserRole + 1).toBool();
     }
-    // 已删除记录仅用于历史查看，不作为修改/删除/重启的操作对象
-    m_restartBtn->setEnabled(canRestart && !deleted);
+    // 已删除记录仅用于历史查看，不作为修改/删除/重启/禁用/占用详情的操作对象
+    // v2.3：远程重启支持 idle 与 fault；禁用仅支持 idle；占用详情仅 in_use
+    m_restartBtn->setEnabled(hasSelection && !deleted
+                             && (status == QStringLiteral("idle") || status == QStringLiteral("fault")));
+    m_disableBtn->setEnabled(hasSelection && !deleted && status == QStringLiteral("idle"));
+    m_activeOrderBtn->setEnabled(hasSelection && !deleted && status == QStringLiteral("in_use"));
     m_editBtn->setEnabled(hasSelection && !deleted);
     m_deleteBtn->setEnabled(hasSelection && !deleted);
     const QString tip = deleted ? QStringLiteral("已删除记录不可操作") : QString();
     m_editBtn->setToolTip(tip);
     m_deleteBtn->setToolTip(tip);
     m_restartBtn->setToolTip(tip);
+    m_disableBtn->setToolTip(tip);
+    m_activeOrderBtn->setToolTip(tip);
 }
 
 int PileManagePage::selectedRow() const
@@ -397,5 +420,96 @@ void PileManagePage::onRestartClicked()
                                   QMessageBox::warning(this, QStringLiteral("远程重启失败"), msg);
                                   refresh();
                               }
+                          });
+}
+
+void PileManagePage::onDisableClicked()
+{
+    const int row = selectedRow();
+    if (row < 0)
+        return;
+    const int pileId = m_table->item(row, 0)->data(Qt::UserRole).toInt();
+    const QString code = m_table->item(row, 0)->text();
+    const QString status = m_table->item(row, 4)->data(Qt::UserRole).toString();
+    if (status != QStringLiteral("idle")) {
+        QMessageBox::warning(this, QStringLiteral("禁用电桩"), QStringLiteral("仅空闲状态的电桩可禁用"));
+        return;
+    }
+
+    const auto ret = QMessageBox::question(this, QStringLiteral("禁用电桩"),
+                                           QStringLiteral("确定要禁用（停用下线）电桩 %1 吗？禁用后状态变为故障，恢复需远程重启。").arg(code));
+    if (ret != QMessageBox::Yes)
+        return;
+
+    m_disableBtn->setEnabled(false);
+    m_client->sendRequest(QStringLiteral("pile_disable"), QJsonObject{{QStringLiteral("pileId"), pileId}},
+                          [this](int code, const QString &msg, const QJsonObject &) {
+                              if (code == 0) {
+                                  QMessageBox::information(this, QStringLiteral("禁用电桩"), QStringLiteral("禁用成功，电桩已停用下线"));
+                                  refresh();
+                              } else {
+                                  QMessageBox::warning(this, QStringLiteral("禁用电桩失败"), msg);
+                                  refresh();
+                              }
+                          });
+}
+
+void PileManagePage::onShowActiveOrder()
+{
+    const int row = selectedRow();
+    if (row < 0)
+        return;
+    const int pileId = m_table->item(row, 0)->data(Qt::UserRole).toInt();
+    const QString code = m_table->item(row, 0)->text();
+
+    m_activeOrderBtn->setEnabled(false);
+    m_client->sendRequest(QStringLiteral("pile_active_order"), QJsonObject{{QStringLiteral("pileId"), pileId}},
+                          [this, code](int respCode, const QString &msg, const QJsonObject &data) {
+                              updateActionButtons();
+                              if (respCode != 0) {
+                                  QMessageBox::warning(this, QStringLiteral("占用详情"), msg);
+                                  return;
+                              }
+                              const QJsonObject order = data[QStringLiteral("order")].toObject();
+                              if (order.isEmpty()) {
+                                  QMessageBox::information(this, QStringLiteral("占用详情"),
+                                                           QStringLiteral("电桩 %1 当前没有占用订单").arg(code));
+                                  return;
+                              }
+
+                              QDialog dialog(this);
+                              dialog.setWindowTitle(QStringLiteral("电桩 %1 - 占用订单").arg(code));
+                              QFormLayout *form = new QFormLayout(&dialog);
+
+                              const int orderId = order[QStringLiteral("orderId")].toInt();
+                              const QString status = order[QStringLiteral("status")].toString();
+                              const QDateTime reservedAt = QDateTime::fromString(
+                                  order[QStringLiteral("reservedAt")].toString(), Qt::ISODate);
+                              const QDateTime startTime = QDateTime::fromString(
+                                  order[QStringLiteral("startTime")].toString(), Qt::ISODate);
+
+                              QString durationText = QStringLiteral("—（未开始充电）");
+                              if (startTime.isValid()) {
+                                  const qint64 minutes = startTime.secsTo(QDateTime::currentDateTime()) / 60;
+                                  durationText = minutes >= 60
+                                                     ? QStringLiteral("%1 小时 %2 分钟").arg(minutes / 60).arg(minutes % 60)
+                                                     : QStringLiteral("%1 分钟").arg(minutes);
+                              }
+
+                              QLabel *statusLabel = new QLabel(UiEnums::orderStatusText(status));
+                              QPalette statusPalette = statusLabel->palette();
+                              statusPalette.setColor(QPalette::WindowText, UiEnums::orderStatusColor(status));
+                              statusLabel->setPalette(statusPalette);
+                              form->addRow(QStringLiteral("订单号"), new QLabel(QString::number(orderId)));
+                              form->addRow(QStringLiteral("用户手机号"), new QLabel(order[QStringLiteral("userPhone")].toString()));
+                              form->addRow(QStringLiteral("状态"), statusLabel);
+                              form->addRow(QStringLiteral("预约时间"), new QLabel(reservedAt.isValid() ? reservedAt.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) : QStringLiteral("—")));
+                              form->addRow(QStringLiteral("开始时间"), new QLabel(startTime.isValid() ? startTime.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) : QStringLiteral("—")));
+                              form->addRow(QStringLiteral("已充时长"), new QLabel(durationText));
+
+                              QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+                              connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+                              form->addRow(buttons);
+                              dialog.exec();
                           });
 }

@@ -5,19 +5,29 @@
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QDoubleValidator>
+#include <QFile>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QIntValidator>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPointer>
+#include <QProgressDialog>
 #include <QPushButton>
 #include <QSpinBox>
+#include <QStandardPaths>
 #include <QTableWidget>
 #include <QVBoxLayout>
+
+#include <cmath>
+#include <functional>
+#include <limits>
+#include <memory>
 
 #include "net/socketclient.h"
 #include "uienums.h"
@@ -46,6 +56,9 @@ StationPage::StationPage(SocketClient *client, QWidget *parent)
     m_addBtn = new QPushButton(QStringLiteral("新增站点"));
     m_addBtn->setProperty("primary", true);
     controls->addWidget(m_addBtn);
+    m_importBtn = new QPushButton(QStringLiteral("导入站点"));
+    m_importBtn->setObjectName(QStringLiteral("btnImportStations"));
+    controls->addWidget(m_importBtn);
     QPushButton *refreshBtn = new QPushButton(QStringLiteral("刷新"));
     controls->addWidget(refreshBtn);
     root->addLayout(controls);
@@ -89,6 +102,7 @@ StationPage::StationPage(SocketClient *client, QWidget *parent)
         loadStations();
     });
     connect(m_addBtn, &QPushButton::clicked, this, &StationPage::onAddStation);
+    connect(m_importBtn, &QPushButton::clicked, this, &StationPage::onImportStations);
     connect(pilesBtn, &QPushButton::clicked, this, &StationPage::onShowPiles);
     connect(searchBtn, &QPushButton::clicked, this, [this]() {
         m_page = 1;
@@ -445,4 +459,151 @@ void StationPage::onAddStation()
                                   QMessageBox::warning(this, QStringLiteral("新增站点失败"), msg);
                               }
                           });
+}
+
+void StationPage::onImportStations()
+{
+    if (m_importing) {
+        QMessageBox::information(this, QStringLiteral("导入站点"), QStringLiteral("正在导入中，请稍候"));
+        return;
+    }
+    const QString path = QFileDialog::getOpenFileName(
+        this, QStringLiteral("导入站点"),
+        QStandardPaths::writableLocation(QStandardPaths::HomeLocation),
+        QStringLiteral("JSON 文件 (*.json)"));
+    if (path.isEmpty())
+        return;
+    importStationsFromFile(path);
+}
+
+void StationPage::importStationsFromFile(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        QMessageBox::warning(this, QStringLiteral("导入站点"),
+                             QStringLiteral("无法打开文件：%1").arg(path));
+        return;
+    }
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isArray()) {
+        QMessageBox::warning(this, QStringLiteral("导入站点"),
+                             QStringLiteral("文件格式非法：应为 JSON 数组，元素含 name/address/lng/lat/pricePerKwh/pileCount 字段"));
+        return;
+    }
+    const QJsonArray items = doc.array();
+    if (items.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("导入站点"), QStringLiteral("文件为空数组，没有可导入的站点"));
+        return;
+    }
+
+    // 逐条预校验（与服务端 station_add 参数规则一致，协议 7.8），通过后进入发送队列
+    QList<QPair<QString, QJsonObject>> queue;
+    QStringList failures;
+    for (int i = 0; i < items.size(); ++i) {
+        const QString label = QStringLiteral("第 %1 条").arg(i + 1);
+        if (!items.at(i).isObject()) {
+            failures << QStringLiteral("%1：不是 JSON 对象").arg(label);
+            continue;
+        }
+        const QJsonObject obj = items.at(i).toObject();
+        const QString name = obj[QStringLiteral("name")].toString().trimmed();
+        const QString address = obj[QStringLiteral("address")].toString().trimmed();
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        const double lng = obj[QStringLiteral("lng")].toDouble(nan);
+        const double lat = obj[QStringLiteral("lat")].toDouble(nan);
+        const double price = obj[QStringLiteral("pricePerKwh")].toDouble(nan);
+        const double pileCount = obj[QStringLiteral("pileCount")].toDouble(nan);
+
+        QString error;
+        if (name.isEmpty() || address.isEmpty())
+            error = QStringLiteral("name/address 不能为空");
+        else if (std::isnan(lng) || lng < -180.0 || lng > 180.0 || std::isnan(lat) || lat < -90.0 || lat > 90.0)
+            error = QStringLiteral("lng/lat 非法或超出范围");
+        else if (std::isnan(price) || price <= 0)
+            error = QStringLiteral("pricePerKwh 必须大于 0");
+        else if (std::isnan(pileCount) || pileCount != std::floor(pileCount) || pileCount < 1 || pileCount > 100)
+            error = QStringLiteral("pileCount 必须为 1 至 100 的整数");
+
+        if (!error.isEmpty()) {
+            failures << QStringLiteral("%1（%2）：%3").arg(label).arg(name.isEmpty() ? QStringLiteral("未命名") : name).arg(error);
+            continue;
+        }
+
+        QJsonObject payload;
+        payload[QStringLiteral("name")] = name;
+        payload[QStringLiteral("address")] = address;
+        payload[QStringLiteral("lng")] = lng;
+        payload[QStringLiteral("lat")] = lat;
+        payload[QStringLiteral("pricePerKwh")] = price;
+        payload[QStringLiteral("pileCount")] = static_cast<int>(pileCount);
+        queue.append(QPair<QString, QJsonObject>(name, payload));
+    }
+
+    const int total = queue.size();
+    if (total == 0) {
+        QMessageBox::warning(this, QStringLiteral("导入站点"),
+                             QStringLiteral("没有可导入的有效站点：\n%1").arg(failures.join(QLatin1Char('\n'))));
+        return;
+    }
+
+    // 顺序逐条 station_add，避免并发压垮服务端；进度条可取消
+    m_importing = true;
+    m_importBtn->setEnabled(false);
+
+    QProgressDialog *progress = new QProgressDialog(this);
+    progress->setWindowTitle(QStringLiteral("导入站点"));
+    progress->setRange(0, total);
+    progress->setValue(0);
+    progress->setMinimumDuration(0);
+    progress->setAutoClose(false);
+    progress->setAutoReset(false);
+    progress->setAttribute(Qt::WA_DeleteOnClose);
+    progress->show();
+
+    auto queuePtr = std::make_shared<QList<QPair<QString, QJsonObject>>>(queue);
+    auto failuresPtr = std::make_shared<QStringList>(failures);
+    auto successPtr = std::make_shared<int>(0);
+    auto sendNext = std::make_shared<std::function<void()>>();
+    const QPointer<QProgressDialog> progressGuard(progress);
+
+    *sendNext = [=]() {
+        const bool canceled = !progressGuard || progressGuard->wasCanceled();
+        if (queuePtr->isEmpty() || canceled) {
+            if (progressGuard)
+                progressGuard->close();
+            const int succeeded = *successPtr;
+            const int notImported = queuePtr->size();
+            const QStringList failed = *failuresPtr;
+            m_importing = false;
+            m_importBtn->setEnabled(true);
+            refresh();
+            QString summary = canceled && notImported > 0
+                                  ? QStringLiteral("导入已取消：成功 %1 条，失败 %2 条，剩余 %3 条未导入")
+                                        .arg(succeeded)
+                                        .arg(failed.size())
+                                        .arg(notImported)
+                                  : QStringLiteral("导入完成：成功 %1 条，失败 %2 条").arg(succeeded).arg(failed.size());
+            if (!failed.isEmpty())
+                summary += QStringLiteral("\n\n失败明细：\n") + failed.join(QLatin1Char('\n'));
+            QMessageBox::information(this, QStringLiteral("导入站点"), summary);
+            return;
+        }
+
+        const int index = total - queuePtr->size() + 1;
+        const auto entry = queuePtr->takeFirst();
+        progressGuard->setLabelText(QStringLiteral("正在导入第 %1/%2 条：%3").arg(index).arg(total).arg(entry.first));
+
+        m_client->sendRequest(QStringLiteral("station_add"), entry.second,
+                              [=](int code, const QString &msg, const QJsonObject &) {
+                                  if (progressGuard)
+                                      progressGuard->setValue(index);
+                                  if (code == 0)
+                                      ++(*successPtr);
+                                  else
+                                      failuresPtr->append(QStringLiteral("第 %1 条（%2）：%3").arg(index).arg(entry.first).arg(msg));
+                                  (*sendNext)();
+                              });
+    };
+    (*sendNext)();
 }
