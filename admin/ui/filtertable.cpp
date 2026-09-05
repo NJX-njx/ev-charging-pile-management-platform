@@ -31,9 +31,10 @@
 
 namespace {
 
-// 色板（docs/visual-design.md）：主色 #00A870、辅助 #9CA3AF
+// 色板（docs/visual-design.md）：主色 #00A870、辅助 #9CA3AF、文本-次 #6B7280
 const QColor kPrimary(0x00, 0xA8, 0x70);
 const QColor kFunnelIdle(0x9C, 0xA3, 0xAF);
+const QColor kFunnelGlyph(0x6B, 0x72, 0x80);
 
 // 装入顺序标记（「不排序」状态据此还原），页面只用 UserRole/UserRole+1，避开
 const int kOrderRole = Qt::UserRole + 100;
@@ -97,7 +98,7 @@ void FilterHeaderView::setColumnExcluded(int column, bool excluded)
 
 QRect FilterHeaderView::filterIconRect(const QRect &sectionRect) const
 {
-    return QRect(sectionRect.right() - 18, sectionRect.center().y() - 8, 16, 16);
+    return QRect(sectionRect.right() - 20, sectionRect.center().y() - 9, 18, 18);
 }
 
 QRect FilterHeaderView::sortArrowRect(const QRect &sectionRect) const
@@ -141,10 +142,15 @@ void FilterHeaderView::paintSection(QPainter *painter, const QRect &rect, int lo
         painter->drawPolygon(tri);
     }
 
-    // 筛选漏斗：生效列主色填充，未生效列灰色填充
+    // 筛选漏斗按钮：白底描边小按钮始终可见；生效列主色底白图标，未生效列次色图标
     const QRect fr = filterIconRect(rect);
-    painter->setBrush(m_filteredColumns.contains(logicalIndex) ? kPrimary : kFunnelIdle);
-    const qreal l = fr.left() + 2, r = fr.right() - 2, t = fr.top() + 3, b = fr.bottom() - 3;
+    const bool filtered = m_filteredColumns.contains(logicalIndex);
+    painter->setPen(QPen(filtered ? kPrimary : kFunnelIdle, 1));
+    painter->setBrush(filtered ? kPrimary : QColor(Qt::white));
+    painter->drawRoundedRect(fr, 3, 3);
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(filtered ? QColor(Qt::white) : kFunnelGlyph);
+    const qreal l = fr.left() + 3, r = fr.right() - 3, t = fr.top() + 4, b = fr.bottom() - 4;
     const qreal midY = t + (b - t) * 0.52;
     const qreal cx = fr.center().x();
     QPainterPath path;
