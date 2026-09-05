@@ -11,6 +11,7 @@ UserInfo UserInfo::fromJson(const QJsonObject &o)
     u.balance = o.value(QStringLiteral("balance")).toDouble();
     u.regTime = o.value(QStringLiteral("regTime")).toString();
     u.status = o.value(QStringLiteral("status")).toString();
+    u.hasPassword = o.value(QStringLiteral("hasPassword")).toBool();
     const QJsonValue avatar = o.value(QStringLiteral("avatar"));
     if (avatar.isObject()) {
         const QJsonObject a = avatar.toObject();

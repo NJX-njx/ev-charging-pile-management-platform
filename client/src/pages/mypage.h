@@ -42,6 +42,7 @@ private:
     QLineEdit *m_nicknameEdit;
     QPushButton *m_saveNicknameButton;
     QPushButton *m_avatarButton;
+    QPushButton *m_passwordButton;
     QLabel *m_phoneLabel;
 
     QLabel *m_balanceLabel;

@@ -63,6 +63,8 @@ void SocketClient::logout()
     m_manualClose = true;
     m_loggedIn = false;
     m_phone.clear();
+    m_password.clear();
+    m_code.clear();
     m_pingTimer->stop();
     m_reconnectTimer->stop();
     failAllPending(kErrNotConnected, QStringLiteral("已退出登录"));
@@ -121,16 +123,30 @@ qint64 SocketClient::sendRequest(const QString &type, const QJsonObject &payload
     return seq;
 }
 
-void SocketClient::login(const QString &phone, ResponseCallback cb)
+void SocketClient::login(const QString &phone, const QString &password, const QString &code,
+                         ResponseCallback cb)
 {
     m_phone = phone;
-    sendRequest(QStringLiteral("user_login"), QJsonObject{{QStringLiteral("phone"), phone}},
-                [this, cb](int code, const QString &msg, const QJsonObject &data) {
-                    if (code == 0)
+    QJsonObject payload{{QStringLiteral("phone"), phone}};
+    if (!password.isEmpty())
+        payload.insert(QStringLiteral("password"), password);
+    else if (!code.isEmpty())
+        payload.insert(QStringLiteral("code"), code);
+    sendRequest(QStringLiteral("user_login"), payload,
+                [this, password, code, cb](int rc, const QString &msg, const QJsonObject &data) {
+                    if (rc == 0) {
                         m_loggedIn = true;
+                        m_password = password;
+                        m_code = code;
+                    }
                     if (cb)
-                        cb(code, msg, data);
+                        cb(rc, msg, data);
                 });
+}
+
+void SocketClient::setSessionPassword(const QString &password)
+{
+    m_password = password;
 }
 
 void SocketClient::setPending(qint64 seq, const ResponseCallback &cb)
@@ -244,10 +260,15 @@ void SocketClient::startReconnect()
 void SocketClient::autoRelogin()
 {
     m_reloginPending = true;
-    sendRequest(QStringLiteral("user_login"), QJsonObject{{QStringLiteral("phone"), m_phone}},
-                [this](int code, const QString &msg, const QJsonObject &) {
+    QJsonObject payload{{QStringLiteral("phone"), m_phone}};
+    if (!m_password.isEmpty())
+        payload.insert(QStringLiteral("password"), m_password);
+    else if (!m_code.isEmpty())
+        payload.insert(QStringLiteral("code"), m_code);
+    sendRequest(QStringLiteral("user_login"), payload,
+                [this](int rc, const QString &msg, const QJsonObject &data) {
                     m_reloginPending = false;
-                    m_loggedIn = (code == 0);
-                    emit reloginFinished(code == 0, msg);
+                    m_loggedIn = (rc == 0);
+                    emit reloginFinished(rc == 0, msg, data);
                 });
 }

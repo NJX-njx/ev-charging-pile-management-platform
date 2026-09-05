@@ -214,3 +214,28 @@ QMessageBox QLabel {
 QMessageBox QPushButton {
     min-width: 72px;
 }
+
+/* ---------- 登录方式切换（分段按钮） ---------- */
+QPushButton#segmentButton {
+    background: #F5F6F7;
+    border: 1px solid #E0E3E6;
+    color: #6B7280;
+}
+QPushButton#segmentButton:checked {
+    background: #E3F6EF;
+    border: 1px solid #00A870;
+    color: #00A870;
+    font-weight: bold;
+}
+
+/* ---------- 文字链接按钮 ---------- */
+QPushButton[class="link"] {
+    background: transparent;
+    border: none;
+    color: #00A870;
+    min-height: 24px;
+    padding: 0 4px;
+}
+QPushButton[class="link"]:pressed {
+    color: #00875C;
+}

@@ -13,6 +13,7 @@
 #include "pages/findstationpage.h"
 #include "pages/loginpage.h"
 #include "pages/mypage.h"
+#include "pages/passworddialog.h"
 
 MainWindow::MainWindow(const AppConfig &config, QWidget *parent)
     : QMainWindow(parent)
@@ -82,6 +83,7 @@ MainWindow::MainWindow(const AppConfig &config, QWidget *parent)
         m_stack->setCurrentWidget(m_mainPage);
         switchTab(0);
         m_chargingPage->refresh();
+        maybePromptSetPassword(user);
     });
     connect(m_loginPage, &LoginPage::configChanged, this, [this](const AppConfig &config) {
         m_config = config;
@@ -96,11 +98,15 @@ MainWindow::MainWindow(const AppConfig &config, QWidget *parent)
         if (m_stack->currentWidget() == m_mainPage && !m_client->isLoggedIn())
             showBanner(QStringLiteral("已重新连接，正在恢复登录…"));
     });
-    connect(m_client, &SocketClient::reloginFinished, this, [this](bool ok, const QString &msg) {
+    connect(m_client, &SocketClient::reloginFinished, this,
+            [this](bool ok, const QString &msg, const QJsonObject &data) {
         hideBanner();
         if (ok) {
             m_chargingPage->refresh();
             m_myPage->refreshProfile();
+            const UserInfo user =
+                UserInfo::fromJson(data.value(QStringLiteral("user")).toObject());
+            maybePromptSetPassword(user);
             return;
         }
         QMessageBox::warning(this, QStringLiteral("会话"),
@@ -135,6 +141,24 @@ void MainWindow::switchTab(int index)
     m_tabStack->setCurrentIndex(index);
     for (int i = 0; i < m_tabButtons.size(); ++i)
         m_tabButtons.at(i)->setChecked(i == index);
+}
+
+void MainWindow::maybePromptSetPassword(const UserInfo &user)
+{
+    if (user.hasPassword)
+        return;
+    // 排队到事件循环，等登录成功的提示框与页面切换完成后再弹出
+    QTimer::singleShot(0, this, [this]() {
+        if (!m_client->isLoggedIn())
+            return;
+        PasswordDialog dlg(m_client, false, true, this);
+        connect(&dlg, &PasswordDialog::passwordUpdated, this,
+                [this](const QString &newPassword) {
+                    m_client->setSessionPassword(newPassword);
+                    m_myPage->refreshProfile();
+                });
+        dlg.exec();
+    });
 }
 
 void MainWindow::showBanner(const QString &text)

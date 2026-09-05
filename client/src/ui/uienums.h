@@ -39,6 +39,17 @@ inline QString userStatusText(const QString &status)
     return QStringLiteral("未知");
 }
 
+// 密码规则（protocol 3.1）：6 至 20 位，不含空白字符
+inline bool isPasswordValid(const QString &password)
+{
+    if (password.size() < 6 || password.size() > 20)
+        return false;
+    for (const QChar c : password)
+        if (c.isSpace())
+            return false;
+    return true;
+}
+
 inline void setState(QLabel *label, const QString &state)
 {
     label->setProperty("state", state);
