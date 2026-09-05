@@ -32,8 +32,10 @@ STATE = {
     "stations": [
         {"stationId": 1, "name": "良乡大学城北站", "address": "房山区良乡高教园区",
          "lng": 116.123, "lat": 39.732, "pricePerKwh": 1.20, "deleted": False},
+        {"stationId": 2, "name": "长阳地铁站充电站", "address": "房山区长阳镇京良路",
+         "lng": 116.212, "lat": 39.764, "pricePerKwh": 1.50, "deleted": False},
     ],
-    "nextStationId": 2,
+    "nextStationId": 3,
     "piles": [
         {"pileId": 101, "code": "P-0101", "stationId": 1, "type": "fast", "powerKw": 60.0,
          "status": "idle", "chargeCount": 10, "chargeMinutes": 600, "deleted": False},
@@ -41,12 +43,22 @@ STATE = {
          "status": "in_use", "chargeCount": 5, "chargeMinutes": 300, "deleted": False},
         {"pileId": 103, "code": "P-0103", "stationId": 1, "type": "fast", "powerKw": 120.0,
          "status": "fault", "chargeCount": 3, "chargeMinutes": 120, "deleted": False},
+        {"pileId": 201, "code": "P-0201", "stationId": 2, "type": "fast", "powerKw": 90.0,
+         "status": "idle", "chargeCount": 20, "chargeMinutes": 900, "deleted": False},
+        {"pileId": 202, "code": "P-0202", "stationId": 2, "type": "slow", "powerKw": 7.0,
+         "status": "idle", "chargeCount": 8, "chargeMinutes": 480, "deleted": False},
     ],
-    "nextPileId": 104,
+    "nextPileId": 203,
     "users": [
         {"userId": 1, "phone": "13800001234", "nickname": "测试用户", "balance": 100.0,
          "regTime": "2026-09-01T10:00:00+08:00", "status": "normal", "hasPassword": True,
          "deleted": False},
+        {"userId": 2, "phone": "13900005678", "nickname": "冻结用户", "balance": 25.5,
+         "regTime": "2026-09-02T11:00:00+08:00", "status": "frozen", "hasPassword": True,
+         "deleted": False},
+        {"userId": 3, "phone": "13700009999", "nickname": "已删用户", "balance": 0.0,
+         "regTime": "2026-09-03T12:00:00+08:00", "status": "normal", "hasPassword": True,
+         "deleted": True},
     ],
     "orders": [
         # 102 号桩的占用订单（充电中）
@@ -54,6 +66,17 @@ STATE = {
          "status": "charging",
          "reservedAt": "2026-09-05T10:00:00+08:00",
          "startTime": "2026-09-05T10:02:00+08:00", "endTime": None, "settledAt": None,
+         "energyKwh": None, "unitPrice": 1.20, "amount": None},
+        {"orderId": 10002, "userPhone": "13900005678", "stationId": 2, "pileId": 201,
+         "status": "completed",
+         "reservedAt": "2026-09-04T09:00:00+08:00",
+         "startTime": "2026-09-04T09:02:00+08:00", "endTime": "2026-09-04T10:02:00+08:00",
+         "settledAt": "2026-09-04T10:03:00+08:00",
+         "energyKwh": 45.5, "unitPrice": 1.50, "amount": 68.25},
+        {"orderId": 10003, "userPhone": "13800001234", "stationId": 1, "pileId": 101,
+         "status": "cancelled",
+         "reservedAt": "2026-09-03T08:00:00+08:00",
+         "startTime": None, "endTime": None, "settledAt": None,
          "energyKwh": None, "unitPrice": 1.20, "amount": None},
     ],
 }
@@ -182,7 +205,11 @@ def handle(req):
 
     if t == "pile_list":
         include_deleted = bool(p.get("includeDeleted"))
+        station_id = int(p.get("stationId") or 0)
         piles = [x for x in STATE["piles"] if include_deleted or not x["deleted"]]
+        # 协议 7.5：stationId 省略或为 0 表示全部站点，正整数按站点筛选
+        if station_id > 0:
+            piles = [x for x in piles if x["stationId"] == station_id]
         return ok({"piles": [pile_obj(x) for x in sorted(piles, key=lambda x: x["pileId"])]})
 
     if t == "pile_restart":
@@ -321,7 +348,8 @@ def handle(req):
         if keyword:
             users = [u for u in users if keyword in u["phone"]]
         return ok({"users": [{k: u[k] for k in
-                              ("userId", "phone", "nickname", "balance", "regTime", "status", "hasPassword")}
+                              ("userId", "phone", "nickname", "balance", "regTime", "status",
+                               "hasPassword", "deleted")}
                              for u in users]})
 
     if t == "user_set_status":
