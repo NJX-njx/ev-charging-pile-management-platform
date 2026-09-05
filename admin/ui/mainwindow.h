@@ -18,10 +18,6 @@ public:
                         QWidget *parent = nullptr);
     ~MainWindow();
 
-private slots:
-    void onChangePassword();
-    void onManageAdmins();
-
 private:
     void refreshCurrentPage();
 
@@ -30,5 +26,4 @@ private:
     QString m_username;
     QString m_password;
     QLabel *m_connLabel;
-    bool m_pwdUpdatePending = false;
 };
