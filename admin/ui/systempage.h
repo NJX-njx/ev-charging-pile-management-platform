@@ -5,6 +5,7 @@
 class QLineEdit;
 class QPushButton;
 class QTableWidget;
+class FilterTable;
 class SocketClient;
 
 // 系统管理页：整合管理员账号管理（协议 7.23~7.25）与修改密码（协议 7.11）
@@ -37,6 +38,7 @@ private:
     SocketClient *m_client;
     QString m_currentUsername;
     QTableWidget *m_table;
+    FilterTable *m_ft;
     QPushButton *m_addBtn;
     QPushButton *m_deleteBtn;
     QLineEdit *m_oldPwdEdit;

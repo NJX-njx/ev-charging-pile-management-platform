@@ -16,6 +16,7 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 
+#include "filtertable.h"
 #include "net/socketclient.h"
 
 SystemPage::SystemPage(SocketClient *client, const QString &currentUsername, QWidget *parent)
@@ -50,6 +51,8 @@ QWidget *SystemPage::createAdminCard()
     m_table->setObjectName(QStringLiteral("tableAdmins"));
     m_table->setColumnCount(2);
     m_table->setHorizontalHeaderLabels({QStringLiteral("ID"), QStringLiteral("用户名")});
+    // 先挂筛选排序表头，再配置列宽模式（setHorizontalHeader 会替换表头实例）
+    m_ft = new FilterTable(m_table, this);
     m_table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -159,6 +162,8 @@ void SystemPage::loadAdmins()
                                   nameItem->setData(Qt::UserRole, username);
                                   m_table->setItem(row, 1, nameItem);
                               }
+                              // 重载后重新应用排序/筛选（管理员列表无选中恢复，与原行为一致）
+                              m_ft->apply();
                               updateActionButtons();
                           });
 }

@@ -17,6 +17,7 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 
+#include "filtertable.h"
 #include "net/socketclient.h"
 #include "uienums.h"
 
@@ -81,11 +82,14 @@ UserPage::UserPage(SocketClient *client, QWidget *parent)
     root->addLayout(actions);
 
     m_table = new QTableWidget;
+    m_table->setObjectName(QStringLiteral("userTable"));
     m_table->setColumnCount(6);
     m_table->setHorizontalHeaderLabels({
         QStringLiteral("用户ID"), QStringLiteral("手机号"), QStringLiteral("昵称"),
         QStringLiteral("余额(元)"), QStringLiteral("注册时间"), QStringLiteral("状态"),
     });
+    // 先挂筛选排序表头，再配置列宽模式（setHorizontalHeader 会替换表头实例）
+    m_ft = new FilterTable(m_table, this);
     m_table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -190,17 +194,10 @@ void UserPage::loadUsers(const QString &phoneKeyword)
                                   statusItem->setData(Qt::UserRole, status);
                                   m_table->setItem(row, 5, statusItem);
                               }
-                              // 重载后恢复选中：优先按 userId 找回原行，否则选中第一行，
-                              // 保证始终存在真实选中行而非仅有当前行高亮
-                              int targetRow = -1;
-                              for (int row = 0; row < m_table->rowCount(); ++row) {
-                                  if (m_table->item(row, 0)->data(Qt::UserRole).toInt() == previousUserId) {
-                                      targetRow = row;
-                                      break;
-                                  }
-                              }
-                              if (targetRow < 0 && m_table->rowCount() > 0)
-                                  targetRow = 0;
+                              // 重载后恢复选中：优先按 userId 找回原行（跳过筛选隐藏行），
+                              // 否则选中第一可见行，保证始终存在真实选中行而非仅有当前行高亮
+                              m_ft->apply();
+                              const int targetRow = m_ft->rowToSelect(previousUserId);
                               if (targetRow >= 0)
                                   m_table->selectRow(targetRow);
                               updateActionButtons();
