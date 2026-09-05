@@ -11,6 +11,8 @@
 #include <QVBoxLayout>
 
 #ifdef EVCP_HAVE_WEBENGINE
+#include <QWebEnginePage>
+#include <QWebEngineProfile>
 #include <QWebEngineView>
 #endif
 
@@ -154,6 +156,14 @@ void NavigationDialog::loadRoute()
 #ifdef EVCP_HAVE_WEBENGINE
     if (!m_view) {
         m_view = new QWebEngineView(m_stack);
+        // 腾讯 routeplan 页面按 UA 分流：默认桌面 UA 返回横屏桌面版 H5，竖屏
+        // 窗口内出现横向滚动。为本对话框单独建 profile 设移动端 UA（默认
+        // profile 与 mapbridge 定位页共享，不能全局改），使其返回竖屏移动版
+        auto *profile = new QWebEngineProfile(m_view);
+        profile->setHttpUserAgent(QStringLiteral(
+            "Mozilla/5.0 (Linux; Android 13; Pixel 6) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"));
+        m_view->setPage(new QWebEnginePage(profile, m_view));
         m_stack->addWidget(m_view);
     }
     m_view->load(buildRouteUrl(m_mode, m_fromLng, m_fromLat, m_toLng, m_toLat,
