@@ -132,12 +132,21 @@ LoginPage::LoginPage(SocketClient *client, QWidget *parent)
     connect(m_client, &SocketClient::connected, this, [this]() {
         if (m_waitingConnect) {
             m_waitingConnect = false;
+            setBusy(true); // 连接成功，切换为「登录中…」并禁用取消
             doLogin();
         }
     });
     connect(m_client, &SocketClient::connectionLost, this, [this](const QString &reason) {
         if (m_loginButton->isEnabled())
             return;
+        m_waitingConnect = false;
+        setBusy(false);
+        QMessageBox::warning(this, QStringLiteral("连接服务器"),
+                             QStringLiteral("无法连接服务器：%1").arg(reason));
+    });
+    connect(m_client, &SocketClient::connectFailed, this, [this](const QString &reason) {
+        if (!m_waitingConnect)
+            return; // 非本次登录触发的连接失败（如已登录后的后台重连），由主窗口横幅提示
         m_waitingConnect = false;
         setBusy(false);
         QMessageBox::warning(this, QStringLiteral("连接服务器"),
@@ -185,6 +194,14 @@ bool LoginPage::ensureConnected()
 
 void LoginPage::onLoginClicked()
 {
+    if (m_waitingConnect) {
+        // 连接等待期按钮文案为「连接中…（点击取消）」，再次点击即取消本次连接
+        m_waitingConnect = false;
+        m_client->cancelConnect();
+        setBusy(false);
+        return;
+    }
+
     static const QRegularExpression phoneRe(QStringLiteral("^1\\d{10}$"));
     static const QRegularExpression codeRe(QStringLiteral("^\\d{6}$"));
     const QString phone = m_phoneEdit->text().trimmed();
@@ -202,19 +219,18 @@ void LoginPage::onLoginClicked()
         return;
     }
 
-    setBusy(true);
     if (m_client->isConnected()
         && m_client->serverDescription() == QStringLiteral("%1:%2")
                                                .arg(currentConfig().host)
                                                .arg(m_portEdit->text().toUInt())) {
+        setBusy(true);
         doLogin();
         return;
     }
-    if (!ensureConnected()) {
-        setBusy(false);
+    if (!ensureConnected())
         return;
-    }
     m_waitingConnect = true;
+    setBusy(true);
 }
 
 void LoginPage::doLogin()
@@ -240,6 +256,8 @@ void LoginPage::doLogin()
                             emit loginSuccess(user, isNew);
                             return;
                         }
+                        if (code == SocketClient::kErrConnectionLost)
+                            return; // 断线已由 connectionLost 提示，避免重复弹窗
                         showLoginError(code, msg);
                     });
 }
@@ -270,7 +288,11 @@ void LoginPage::showForgotPassword()
 
 void LoginPage::setBusy(bool busy)
 {
-    m_loginButton->setEnabled(!busy);
+    // 连接等待期登录按钮保持可用（点击即取消连接）；请求在途期禁用
+    m_loginButton->setEnabled(!busy || m_waitingConnect);
+    m_loginButton->setText(!busy ? QStringLiteral("登录 / 注册")
+                           : m_waitingConnect ? QStringLiteral("连接中…（点击取消）")
+                                              : QStringLiteral("登录中…"));
     m_phoneEdit->setEnabled(!busy);
     m_formStack->setEnabled(!busy);
     for (QPushButton *btn : m_modeButtons)

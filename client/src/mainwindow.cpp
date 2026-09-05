@@ -95,6 +95,10 @@ MainWindow::MainWindow(const AppConfig &config, QWidget *parent)
         if (m_stack->currentWidget() == m_mainPage)
             showBanner(QStringLiteral("连接已断开（%1），正在重连…").arg(reason));
     });
+    connect(m_client, &SocketClient::connectFailed, this, [this](const QString &reason) {
+        if (m_stack->currentWidget() == m_mainPage)
+            showBanner(QStringLiteral("无法连接服务器（%1），正在重连…").arg(reason));
+    });
     connect(m_client, &SocketClient::connected, this, [this]() {
         if (m_stack->currentWidget() == m_mainPage && !m_client->isLoggedIn())
             showBanner(QStringLiteral("已重新连接，正在恢复登录…"));

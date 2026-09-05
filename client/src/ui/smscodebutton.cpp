@@ -34,8 +34,18 @@ SmsCodeButton::SmsCodeButton(SocketClient *client, QLineEdit *phoneEdit, QWidget
     connect(m_client, &SocketClient::connected, this, [this]() {
         if (m_waitingConnect) {
             m_waitingConnect = false;
+            setText(QStringLiteral("获取验证码"));
             sendRequest();
         }
+    });
+    connect(m_client, &SocketClient::connectFailed, this, [this](const QString &reason) {
+        if (!m_waitingConnect)
+            return;
+        m_waitingConnect = false;
+        setText(QStringLiteral("获取验证码"));
+        setEnabled(true);
+        QMessageBox::warning(this, QStringLiteral("获取验证码"),
+                             QStringLiteral("无法连接服务器：%1").arg(reason));
     });
 }
 
@@ -59,6 +69,7 @@ void SmsCodeButton::onClicked()
             return;
         }
         m_waitingConnect = true;
+        setText(QStringLiteral("连接中…"));
         setEnabled(false);
         return;
     }
