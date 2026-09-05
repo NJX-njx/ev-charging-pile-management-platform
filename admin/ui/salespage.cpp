@@ -17,7 +17,10 @@
 #include <QtCharts/QChartView>
 #include <QtCharts/QLineSeries>
 #include <QtCharts/QValueAxis>
+// QT_CHARTS_USE_NAMESPACE 仅 Qt5 提供；Qt6 的 QtCharts 类在全局命名空间
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
 QT_CHARTS_USE_NAMESPACE
+#endif
 #endif
 
 SalesPage::SalesPage(SocketClient *client, QWidget *parent)
