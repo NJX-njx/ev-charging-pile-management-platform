@@ -20,7 +20,7 @@ ResetPasswordDialog::ResetPasswordDialog(SocketClient *client, QWidget *parent)
 {
     setWindowTitle(QStringLiteral("重置密码"));
     setModal(true);
-    setMinimumWidth(300);
+    setMinimumWidth(340);
 
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(20, 20, 20, 20);

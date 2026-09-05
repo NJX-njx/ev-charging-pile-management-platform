@@ -3,3 +3,7 @@
 
 # qmake 为 .cpp 内 Q_OBJECT 类生成的 moc 产物（根 .gitignore 只覆盖 moc_*.cpp）
 *.moc
+
+# 测试 harness 就地构建出的可执行文件
+/tests/v22/v22_harness
+/tests/loginfreeze/loginfreeze_harness

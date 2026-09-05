@@ -20,7 +20,7 @@ PasswordDialog::PasswordDialog(SocketClient *client, bool hasPassword, bool allo
     const QString titleText = hasPassword ? QStringLiteral("修改密码") : QStringLiteral("设置登录密码");
     setWindowTitle(titleText);
     setModal(true);
-    setMinimumWidth(300);
+    setMinimumWidth(340);
 
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(20, 20, 20, 20);

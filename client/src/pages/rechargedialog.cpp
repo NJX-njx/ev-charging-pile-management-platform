@@ -69,7 +69,7 @@ RechargeDialog::RechargeDialog(SocketClient *client, QWidget *parent)
     connect(m_payButton, &QPushButton::clicked, this, &RechargeDialog::onPay);
     connect(cancelButton, &QPushButton::clicked, this, &QDialog::reject);
 
-    resize(320, 240);
+    resize(380, 300);
 }
 
 void RechargeDialog::onPay()

@@ -19,7 +19,7 @@ ProfileEditDialog::ProfileEditDialog(SocketClient *client, const UserInfo &user,
 {
     setWindowTitle(QStringLiteral("编辑资料"));
     setModal(true);
-    setMinimumWidth(320);
+    setMinimumWidth(360);
 
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(20, 20, 20, 20);
@@ -32,7 +32,7 @@ ProfileEditDialog::ProfileEditDialog(SocketClient *client, const UserInfo &user,
     auto *avatarRow = new QHBoxLayout();
     m_avatarPreview = new QLabel(this);
     m_avatarPreview->setObjectName(QStringLiteral("avatar"));
-    m_avatarPreview->setFixedSize(64, 64);
+    m_avatarPreview->setFixedSize(72, 72);
     m_avatarPreview->setAlignment(Qt::AlignCenter);
     bool hasPreview = false;
     if (m_user.hasAvatar) {

@@ -3,7 +3,7 @@
 
 * {
     font-family: "Noto Sans CJK SC", "Microsoft YaHei", "PingFang SC", sans-serif;
-    font-size: 13px;
+    font-size: 15px;
     color: #1F2329;
     outline: none;
 }
@@ -14,22 +14,22 @@ QMainWindow, QWidget#centralRoot, QDialog {
 
 /* ---------- 文本 ---------- */
 QLabel#pageTitle {
-    font-size: 18px;
+    font-size: 21px;
     font-weight: bold;
 }
 
 QLabel#cardTitle {
-    font-size: 14px;
+    font-size: 16px;
     font-weight: bold;
 }
 
 QLabel#hint {
-    font-size: 12px;
+    font-size: 14px;
     color: #6B7280;
 }
 
 QLabel#metric {
-    font-size: 26px;
+    font-size: 30px;
     font-weight: bold;
     color: #00A870;
 }
@@ -42,8 +42,8 @@ QLabel#emphasis {
 QLabel#banner {
     background: #ED6C02;
     color: #FFFFFF;
-    font-size: 12px;
-    padding: 4px 8px;
+    font-size: 14px;
+    padding: 6px 10px;
 }
 
 /* 状态着色文字（语义色映射，与 visual-design.md 2.3 一致） */
@@ -83,8 +83,8 @@ QPushButton {
     border: 1px solid #E0E3E6;
     border-radius: 6px;
     color: #1F2329;
-    min-height: 32px;
-    padding: 0 12px;
+    min-height: 38px;
+    padding: 0 14px;
 }
 QPushButton:pressed {
     background: #F0F2F4;
@@ -99,9 +99,9 @@ QPushButton[class="primary"] {
     border: none;
     border-radius: 8px;
     color: #FFFFFF;
-    font-size: 14px;
+    font-size: 16px;
     font-weight: bold;
-    min-height: 44px;
+    min-height: 50px;
 }
 QPushButton[class="primary"]:pressed {
     background: #00875C;
@@ -112,18 +112,18 @@ QPushButton[class="primary"]:disabled {
 }
 
 QPushButton[class="small"] {
-    min-height: 28px;
-    padding: 0 10px;
-    font-size: 12px;
+    min-height: 33px;
+    padding: 0 12px;
+    font-size: 14px;
 }
 QPushButton[class="smallPrimary"] {
     background: #00A870;
     border: none;
     border-radius: 6px;
     color: #FFFFFF;
-    min-height: 28px;
-    padding: 0 10px;
-    font-size: 12px;
+    min-height: 33px;
+    padding: 0 12px;
+    font-size: 14px;
 }
 QPushButton[class="smallPrimary"]:pressed {
     background: #00875C;
@@ -144,8 +144,8 @@ QPushButton#tabButton {
     border-top: 2px solid transparent;
     border-radius: 0;
     color: #6B7280;
-    font-size: 14px;
-    min-height: 48px;
+    font-size: 16px;
+    min-height: 56px;
 }
 QPushButton#tabButton:checked {
     color: #00A870;
@@ -159,7 +159,7 @@ QLineEdit {
     background: #FFFFFF;
     border: 1px solid #E0E3E6;
     border-radius: 6px;
-    min-height: 32px;
+    min-height: 38px;
     padding: 0 8px;
     selection-background-color: #00A870;
 }
@@ -176,7 +176,7 @@ QToolButton#passwordToggle {
     background: transparent;
     border: none;
     color: #6B7280;
-    font-size: 12px;
+    font-size: 14px;
     padding: 0 4px;
 }
 QToolButton#passwordToggle:checked {
@@ -189,7 +189,7 @@ QComboBox {
     background: #FFFFFF;
     border: 1px solid #E0E3E6;
     border-radius: 6px;
-    min-height: 32px;
+    min-height: 38px;
     padding: 0 8px;
 }
 QComboBox:focus {
@@ -197,7 +197,7 @@ QComboBox:focus {
 }
 QComboBox::drop-down {
     border: none;
-    width: 24px;
+    width: 28px;
 }
 QComboBox QAbstractItemView {
     background: #FFFFFF;
@@ -238,16 +238,16 @@ QLabel#avatar {
     background: #E3F6EF;
     border-radius: 8px;
     color: #00A870;
-    font-size: 18px;
+    font-size: 21px;
     font-weight: bold;
 }
 
 /* ---------- 对话框 ---------- */
 QMessageBox QLabel {
-    font-size: 13px;
+    font-size: 15px;
 }
 QMessageBox QPushButton {
-    min-width: 72px;
+    min-width: 84px;
 }
 
 /* ---------- 登录方式切换（分段按钮） ---------- */
@@ -268,7 +268,7 @@ QPushButton[class="link"] {
     background: transparent;
     border: none;
     color: #00A870;
-    min-height: 24px;
+    min-height: 28px;
     padding: 0 4px;
 }
 QPushButton[class="link"]:pressed {
