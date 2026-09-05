@@ -10,6 +10,7 @@ struct UserInfo {
     double balance = 0.0;
     QString regTime;
     QString status;
+    bool hasPassword = false;
     bool hasAvatar = false;
     QString avatarMime;
     QByteArray avatarBytes;

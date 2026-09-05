@@ -23,6 +23,7 @@ public:
 
 private:
     void switchTab(int index);
+    void maybePromptSetPassword(const UserInfo &user);
     void showBanner(const QString &text);
     void hideBanner();
 

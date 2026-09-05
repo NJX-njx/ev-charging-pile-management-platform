@@ -31,13 +31,16 @@ public:
     QString serverDescription() const;
 
     qint64 sendRequest(const QString &type, const QJsonObject &payload, ResponseCallback cb);
-    void login(const QString &phone, ResponseCallback cb);
+    // v2 双方式登录：password 与 code 二选一（同时缺省或同时提供服务端返回 2001）
+    void login(const QString &phone, const QString &password, const QString &code, ResponseCallback cb);
+    // 设置/修改密码成功后调用，使断线自动重登改用密码
+    void setSessionPassword(const QString &password);
 
 signals:
     void connected();
     void connectionLost(const QString &reason);
     void reconnectScheduled(int msec);
-    void reloginFinished(bool ok, const QString &msg);
+    void reloginFinished(bool ok, const QString &msg, const QJsonObject &data);
     void protocolError(const QString &detail);
 
 private:
@@ -61,6 +64,8 @@ private:
     QString m_host;
     quint16 m_port = 8888;
     QString m_phone;
+    QString m_password;
+    QString m_code;
     bool m_loggedIn = false;
     bool m_manualClose = false;
     bool m_reloginPending = false;

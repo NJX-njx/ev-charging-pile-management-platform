@@ -18,6 +18,7 @@
 #include <QVBoxLayout>
 
 #include "net/socketclient.h"
+#include "pages/passworddialog.h"
 #include "ui/uienums.h"
 
 namespace {
@@ -111,8 +112,11 @@ MyPage::MyPage(SocketClient *client, QWidget *parent)
     m_saveNicknameButton->setProperty("class", QStringLiteral("smallPrimary"));
     m_avatarButton = new QPushButton(QStringLiteral("更换头像"), profileCard);
     m_avatarButton->setProperty("class", QStringLiteral("small"));
+    m_passwordButton = new QPushButton(QStringLiteral("修改密码"), profileCard);
+    m_passwordButton->setProperty("class", QStringLiteral("small"));
     profileButtons->addWidget(m_saveNicknameButton);
     profileButtons->addWidget(m_avatarButton);
+    profileButtons->addWidget(m_passwordButton);
     profileButtons->addStretch(1);
     profileLayout->addLayout(profileButtons);
     layout->addWidget(profileCard);
@@ -170,6 +174,18 @@ MyPage::MyPage(SocketClient *client, QWidget *parent)
     scroll->setWidget(body);
     root->addWidget(scroll);
 
+    connect(m_passwordButton, &QPushButton::clicked, this, [this]() {
+        if (!m_hasUser)
+            return;
+        // hasPassword=false 时不显示原密码框，走首次设置语义
+        PasswordDialog dlg(m_client, m_user.hasPassword, false, this);
+        connect(&dlg, &PasswordDialog::passwordUpdated, this,
+                [this](const QString &newPassword) {
+                    m_client->setSessionPassword(newPassword);
+                    refreshProfile();
+                });
+        dlg.exec();
+    });
     connect(m_saveNicknameButton, &QPushButton::clicked, this, &MyPage::onSaveNickname);
     connect(m_avatarButton, &QPushButton::clicked, this, &MyPage::onChangeAvatar);
     connect(m_rechargeButton, &QPushButton::clicked, this, &MyPage::onRecharge);

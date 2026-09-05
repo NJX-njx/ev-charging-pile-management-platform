@@ -20,7 +20,10 @@ SOURCES += \
     src/model/models.cpp \
     src/net/socketclient.cpp \
     src/map/mapbridge.cpp \
+    src/ui/smscodebutton.cpp \
     src/pages/loginpage.cpp \
+    src/pages/resetpassworddialog.cpp \
+    src/pages/passworddialog.cpp \
     src/pages/findstationpage.cpp \
     src/pages/chargingpage.cpp \
     src/pages/mypage.cpp
@@ -33,7 +36,10 @@ HEADERS += \
     src/map/mapbridge.h \
     src/map/tencentmapkey.h \
     src/ui/uienums.h \
+    src/ui/smscodebutton.h \
     src/pages/loginpage.h \
+    src/pages/resetpassworddialog.h \
+    src/pages/passworddialog.h \
     src/pages/findstationpage.h \
     src/pages/chargingpage.h \
     src/pages/mypage.h
