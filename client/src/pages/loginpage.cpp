@@ -115,7 +115,7 @@ LoginPage::LoginPage(SocketClient *client, QWidget *parent)
     m_portEdit->setPlaceholderText(QStringLiteral("端口"));
     m_portEdit->setMaxLength(5);
     m_portEdit->setInputMethodHints(Qt::ImhDigitsOnly);
-    m_portEdit->setFixedWidth(72);
+    m_portEdit->setFixedWidth(84);
     serverRow->addWidget(m_hostEdit, 1);
     serverRow->addWidget(m_portEdit, 0);
     cardLayout->addLayout(serverRow);

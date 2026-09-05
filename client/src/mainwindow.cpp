@@ -21,7 +21,7 @@ MainWindow::MainWindow(const AppConfig &config, QWidget *parent)
     , m_client(new SocketClient(this))
 {
     setWindowTitle(QStringLiteral("电动汽车充电桩 - 用户端"));
-    setFixedSize(390, 844);
+    setFixedSize(460, 960);
 
     auto *central = new QWidget(this);
     central->setObjectName(QStringLiteral("centralRoot"));

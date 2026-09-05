@@ -53,7 +53,7 @@ MyPage::MyPage(SocketClient *client, QWidget *parent)
     auto *profileTopRow = new QHBoxLayout();
     m_avatarLabel = new QLabel(QStringLiteral("头像"), profileCard);
     m_avatarLabel->setObjectName(QStringLiteral("avatar"));
-    m_avatarLabel->setFixedSize(64, 64);
+    m_avatarLabel->setFixedSize(72, 72);
     m_avatarLabel->setAlignment(Qt::AlignCenter);
     profileTopRow->addWidget(m_avatarLabel, 0);
     auto *nameColumn = new QVBoxLayout();

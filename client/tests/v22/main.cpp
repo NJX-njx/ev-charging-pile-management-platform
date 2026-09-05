@@ -657,6 +657,14 @@ int main(int argc, char *argv[])
                     finish(2, QStringLiteral("起点/终点展示不正确：%1 | %2").arg(fromText, toText));
                     return;
                 }
+                // 尺寸断言：对话框近全屏利用主窗口区域（旧 360×560 曾致路线页显示不全）
+                if (dlg->width() < w.width() * 9 / 10
+                    || dlg->height() < w.height() * 17 / 20) {
+                    finish(2, QStringLiteral("导航对话框未充分利用主窗口：dlg %1×%2，主窗 %3×%4")
+                                  .arg(dlg->width()).arg(dlg->height())
+                                  .arg(w.width()).arg(w.height()));
+                    return;
+                }
                 if (dlg->findChild<QWebEngineView *>()) {
                     finish(2, QStringLiteral("点击「导航」前不应创建地图视图"));
                     return;
@@ -692,6 +700,15 @@ int main(int argc, char *argv[])
                 QWebEngineView *view = dlg ? dlg->findChild<QWebEngineView *>() : nullptr;
                 if (!view)
                     return;
+                // 视图断言：QWebEngineView 填满对话框内容区（横向≈对话框内宽，纵向占主体）
+                if (view->width() > 0
+                    && (view->width() < dlg->width() - 40
+                        || view->height() < dlg->height() * 3 / 5)) {
+                    finish(2, QStringLiteral("地图视图未填满内容区：view %1×%2，dlg %3×%4")
+                                  .arg(view->width()).arg(view->height())
+                                  .arg(dlg->width()).arg(dlg->height()));
+                    return;
+                }
                 // 行为断言：点击「导航」后真实发起了加载；联网时服务端 302 跳转到
                 // web 路线规划页（urlChanged 只上报最终提交 URL），其参数可反证
                 // 我们提交的显式坐标被接受

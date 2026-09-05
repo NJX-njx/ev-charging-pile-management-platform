@@ -140,7 +140,13 @@ NavigationDialog::NavigationDialog(const QString &stationName, double fromLng, d
             loadRoute();
     });
 
-    resize(360, 560);
+    // 近全屏利用主窗口区域：旧固定 360×560 下路线规划 H5 的地图与结果
+    // 面板显示不全；改为按顶层窗口尺寸留少量边距，无父窗时退回等效默认尺寸
+    const QWidget *anchor = parent ? parent->window() : nullptr;
+    if (anchor)
+        resize(anchor->size() - QSize(24, 64));
+    else
+        resize(436, 896);
 }
 
 void NavigationDialog::loadRoute()

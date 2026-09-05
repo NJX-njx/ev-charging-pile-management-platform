@@ -430,7 +430,7 @@ void FindStationPage::showStationDetail(const Station &station)
                               auto *closeBtn = new QPushButton(QStringLiteral("关闭"), dialog);
                               connect(closeBtn, &QPushButton::clicked, dialog, &QDialog::accept);
                               dlgLayout->addWidget(closeBtn);
-                              dialog->resize(340, 420);
+                              dialog->resize(400, 480);
                               dialog->show();
                           });
 }
