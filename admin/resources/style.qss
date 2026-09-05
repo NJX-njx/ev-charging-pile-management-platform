@@ -99,7 +99,8 @@ QHeaderView::section {
     background: #F0F2F4;
     border: none;
     border-bottom: 1px solid #E0E3E6;
-    padding: 6px;
+    /* 右侧留白供 FilterTable 的排序箭头与筛选漏斗图标（未挂组件的表头仅多空白） */
+    padding: 6px 30px 6px 6px;
     color: #1F2329;
     font-weight: bold;
 }
