@@ -30,7 +30,7 @@ signals:
     void filterRequested(int logicalIndex, const QPoint &globalPos);
 
 protected:
-    void paintSection(QPainter *painter, const QRect &rect, int logicalIndex) const override;
+    void paintEvent(QPaintEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
@@ -39,6 +39,7 @@ private:
     QRect filterIconRect(const QRect &sectionRect) const;
     QRect sortArrowRect(const QRect &sectionRect) const;
     bool nearSectionBoundary(const QPoint &pos) const;
+    void drawSectionOverlay(QPainter *painter, const QRect &sectionRect, int logicalIndex);
 
     int m_sortColumn = -1;
     int m_sortOrder = 0;

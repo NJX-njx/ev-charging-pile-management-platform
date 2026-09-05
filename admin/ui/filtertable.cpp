@@ -117,14 +117,25 @@ bool FilterHeaderView::nearSectionBoundary(const QPoint &pos) const
     return false;
 }
 
-void FilterHeaderView::paintSection(QPainter *painter, const QRect &rect, int logicalIndex) const
+void FilterHeaderView::paintEvent(QPaintEvent *event)
 {
-    QHeaderView::paintSection(painter, rect, logicalIndex);
-    if (logicalIndex < 0 || m_excludedColumns.contains(logicalIndex))
-        return;
+    QHeaderView::paintEvent(event);
+    // 叠加绘制必须在 paintEvent 里直接画到 viewport：实测在 paintSection 中追加绘制
+    // 不会落屏（Qt 6.2 offscreen/xcb 均如此），因此改为基类绘制完成后统一叠加
+    QPainter painter(viewport());
+    painter.setRenderHint(QPainter::Antialiasing);
+    for (int i = 0; i < count(); ++i) {
+        if (m_excludedColumns.contains(i))
+            continue;
+        const QRect sr(sectionViewportPosition(i), 0, sectionSize(i), height());
+        if (sr.width() > 0 && event->rect().intersects(sr))
+            drawSectionOverlay(&painter, sr, i);
+    }
+}
 
+void FilterHeaderView::drawSectionOverlay(QPainter *painter, const QRect &rect, int logicalIndex)
+{
     painter->save();
-    painter->setRenderHint(QPainter::Antialiasing);
     painter->setPen(Qt::NoPen);
 
     // 排序箭头（升序▲/降序▼，主色）
