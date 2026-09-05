@@ -10,6 +10,8 @@
 
 **v2.2（9 月 5 日再补充）**：密码方式自动注册时直接保存该密码；允许同一用户同时拥有多个未完成订单（`active_order_get` 改为返回 `orders` 数组，**破坏性变更**，`3005` 废弃）；管理端列表新增 `includeDeleted` 可查看已删除数据；新增管理员账号管理消息（`admin_list`/`admin_add`/`admin_delete`，只能由已登录管理员操作，无公开注册）。
 
+**v2.3（9 月 5 日第三次补充）**：`pile_restart` 允许重启 `idle` 电桩（不再仅限 `fault`）；新增 `pile_disable`（禁用即置为 `fault` 停用下线）与 `pile_active_order`（查看 `in_use` 电桩的占用订单）。
+
 ## 1. 通信边界
 
 | 调用方 | 服务 | 协议 | 默认地址 | 用途 |
@@ -187,10 +189,12 @@
 | `revenue_trend` | 管理员 | 近 7 日或 30 日营收趋势 |
 | `pile_status_overview` | 管理员 | 电桩状态数量 |
 | `pile_list` | 管理员 | 查询电桩列表 |
-| `pile_restart` | 管理员 | 模拟远程重启故障电桩 |
+| `pile_restart` | 管理员 | 模拟远程重启电桩（v2.3 起 idle 也可重启） |
 | `pile_add` | 管理员 | 在站点下新增电桩 |
 | `pile_update` | 管理员 | 修改电桩类型与功率 |
 | `pile_delete` | 管理员 | 逻辑删除电桩 |
+| `pile_disable` | 管理员 | 禁用电桩（置为 fault） |
+| `pile_active_order` | 管理员 | 查看 in_use 电桩的占用订单 |
 | `station_list` | 管理员 | 分页查询站点，支持站名搜索 |
 | `station_add` | 管理员 | 新增站点和模拟电桩 |
 | `station_update` | 管理员 | 修改站点信息 |
@@ -614,7 +618,7 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 {"seq":7,"type":"pile_restart","code":0,"msg":"ok","data":{"pileId":101,"status":"idle"}}
 ```
 
-- 只允许重启 `fault` 且没有关联未完成订单的电桩；否则返回 `3002`。
+- v2.3 起允许重启 `fault` 或 `idle` 且没有关联未完成订单的电桩；`in_use`（有未完成订单）返回 `3002`；电桩不存在（含已删除）返回 `2002`。
 - 成功后状态改为 `idle`，管理端重新请求列表和状态总览。
 
 ### 7.7 station_list 站点列表（v2 改为分页 + 搜索，破坏性变更）
@@ -943,6 +947,46 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 ```
 
 不允许删除当前登录的本人账号，也不允许删除最后一个管理员账号，均返回 `3002`；账号不存在返回 `2002`。管理员账号无业务数据关联，直接物理删除。
+
+### 7.26 pile_disable 禁用电桩
+
+禁用即把电桩置为 `fault`（停用下线，用户端不可预约）；恢复使用 `pile_restart`。
+
+请求：
+
+```json
+{"seq":8,"type":"pile_disable","payload":{"pileId":101}}
+```
+
+响应：
+
+```json
+{"seq":8,"type":"pile_disable","code":0,"msg":"ok","data":{"pileId":101,"status":"fault"}}
+```
+
+仅允许禁用 `idle` 电桩；`in_use`（有未完成订单）或已是 `fault` 返回 `3002`；电桩不存在（含已删除）返回 `2002`。
+
+### 7.27 pile_active_order 查看电桩占用订单
+
+请求：
+
+```json
+{"seq":9,"type":"pile_active_order","payload":{"pileId":101}}
+```
+
+`in_use` 电桩有占用订单时：
+
+```json
+{"seq":9,"type":"pile_active_order","code":0,"msg":"ok","data":{"order":{"orderId":10001,"userPhone":"13800001234","stationId":1,"stationName":"星海广场站","pileId":101,"pileCode":"P-0101","powerKw":60.0,"status":"charging","reservedAt":"2026-09-04T10:00:00+08:00","startTime":"2026-09-04T10:02:00+08:00","endTime":null,"settledAt":null,"energyKwh":null,"unitPrice":1.20,"amount":null}}}
+```
+
+无占用订单（电桩 `idle`/`fault`）时：
+
+```json
+{"seq":9,"type":"pile_active_order","code":0,"msg":"ok","data":{"order":null}}
+```
+
+电桩不存在（含已删除）返回 `2002`。
 
 ## 8. Web 数据大屏 HTTP 接口
 
