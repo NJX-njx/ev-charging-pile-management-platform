@@ -48,7 +48,9 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
     QApplication::setOrganizationName(QStringLiteral("NeusoftEVCP"));
     QApplication::setApplicationName(QStringLiteral("evcp-admin"));
-    app.setFont(QFont(QStringLiteral("Noto Sans CJK SC")));
+    // 基准字号 11pt（正文约 14~15px，与 docs/visual-design.md 正文 13~14px 协调），
+    // 页面个别固定字号集中在 resources/style.qss
+    app.setFont(QFont(QStringLiteral("Noto Sans CJK SC"), 11));
 
     QFile styleFile(QStringLiteral(":/style.qss"));
     if (styleFile.open(QIODevice::ReadOnly))

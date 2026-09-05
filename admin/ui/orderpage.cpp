@@ -20,6 +20,7 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 
+#include "filtertable.h"
 #include "net/socketclient.h"
 #include "uienums.h"
 
@@ -94,12 +95,19 @@ OrderPage::OrderPage(SocketClient *client, QWidget *parent)
     root->addLayout(filters);
 
     m_table = new QTableWidget;
+    m_table->setObjectName(QStringLiteral("orderTable"));
     m_table->setColumnCount(9);
     m_table->setHorizontalHeaderLabels({
         QStringLiteral("订单号"), QStringLiteral("手机号"), QStringLiteral("站点"),
         QStringLiteral("电桩编号"), QStringLiteral("状态"), QStringLiteral("电量(kWh)"),
         QStringLiteral("金额(元)"), QStringLiteral("结算时间"), QStringLiteral("操作"),
     });
+    // 先挂筛选排序表头，再配置列宽模式（setHorizontalHeader 会替换表头实例）
+    m_ft = new FilterTable(m_table, this);
+    m_ft->setExcludedColumns({8});
+    m_ft->setScopeNote(QStringLiteral("订单为服务端分页，排序与筛选仅作用于当前页数据"));
+    // 操作列控件排序时由工厂重建（Qt 单元格控件不可跨行搬运）
+    m_ft->setCellWidgetFactory(8, [this](int row) { return createOrderOps(row); });
     m_table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -151,6 +159,17 @@ OrderPage::OrderPage(SocketClient *client, QWidget *parent)
 void OrderPage::refresh()
 {
     loadOrders();
+}
+
+QWidget *OrderPage::createOrderOps(int row)
+{
+    QTableWidgetItem *idItem = m_table->item(row, 0);
+    if (!idItem)
+        return nullptr;
+    const int orderId = idItem->data(Qt::UserRole).toInt();
+    QPushButton *detailBtn = new QPushButton(QStringLiteral("详情"));
+    connect(detailBtn, &QPushButton::clicked, this, [this, orderId]() { showDetail(orderId); });
+    return detailBtn;
 }
 
 int OrderPage::totalPages() const
@@ -222,21 +241,11 @@ void OrderPage::loadOrders()
                                   m_table->setItem(row, 6, new QTableWidgetItem(fmtNum(o[QStringLiteral("amount")], 2)));
                                   m_table->setItem(row, 7, new QTableWidgetItem(fmtTime(o[QStringLiteral("settledAt")])));
 
-                                  QPushButton *detailBtn = new QPushButton(QStringLiteral("详情"));
-                                  m_table->setCellWidget(row, 8, detailBtn);
-                                  connect(detailBtn, &QPushButton::clicked, this,
-                                          [this, orderId]() { showDetail(orderId); });
+                                  m_table->setCellWidget(row, 8, createOrderOps(row));
                               }
-                              // 重载后恢复选中：优先按 orderId 找回原行，否则选中第一行
-                              int targetRow = -1;
-                              for (int row = 0; row < m_table->rowCount(); ++row) {
-                                  if (m_table->item(row, 0)->data(Qt::UserRole).toInt() == previousOrderId) {
-                                      targetRow = row;
-                                      break;
-                                  }
-                              }
-                              if (targetRow < 0 && m_table->rowCount() > 0)
-                                  targetRow = 0;
+                              // 重载后恢复选中：优先按 orderId 找回原行（跳过筛选隐藏行），否则选中第一可见行
+                              m_ft->apply();
+                              const int targetRow = m_ft->rowToSelect(previousOrderId);
                               if (targetRow >= 0)
                                   m_table->selectRow(targetRow);
                               updatePagination();
