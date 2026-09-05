@@ -164,15 +164,15 @@ Response hUserLogin(const QJsonObject &p, Session &s, QSqlDatabase db)
     if (byPassword == byCode)
         return fail(2001, QStringLiteral("provide either password or code"));
 
+    // A phone held only by deleted users is treated as unknown: login auto-registers
+    // a brand-new account (1005 is only for existing sessions of a deleted account).
     QSqlQuery q(db);
     q.prepare(QString::fromLatin1(Protocol::kUserSelect)
-              + QStringLiteral(" WHERE phone = ?"));
+              + QStringLiteral(" WHERE phone = ? AND deleted = 0"));
     q.addBindValue(phone);
     if (!exec(q))
         return fail(5000, QStringLiteral("internal error"));
     const bool found = q.next();
-    if (found && q.value(9).toInt() != 0)
-        return fail(1005, QStringLiteral("account deleted"));
     if (found && q.value(4).toString() == QLatin1String("frozen"))
         return fail(1002, QStringLiteral("account frozen"));
     if (byCode) {
@@ -199,7 +199,7 @@ Response hUserLogin(const QJsonObject &p, Session &s, QSqlDatabase db)
             return fail(5000, QStringLiteral("internal error"));
         QSqlQuery q2(db);
         q2.prepare(QString::fromLatin1(Protocol::kUserSelect)
-                   + QStringLiteral(" WHERE phone = ?"));
+                   + QStringLiteral(" WHERE phone = ? AND deleted = 0"));
         q2.addBindValue(phone);
         if (!exec(q2) || !q2.next())
             return fail(5000, QStringLiteral("internal error"));
@@ -213,13 +213,8 @@ Response hCodeRequest(const QJsonObject &p, Session &, QSqlDatabase db)
     const QString phone = p.value(QStringLiteral("phone")).toString();
     if (!validPhone(phone))
         return fail(2001, QStringLiteral("invalid phone"));
-    QSqlQuery q(db);
-    q.prepare(QStringLiteral("SELECT deleted FROM users WHERE phone = ?"));
-    q.addBindValue(phone);
-    if (!exec(q))
-        return fail(5000, QStringLiteral("internal error"));
-    if (q.next() && q.value(0).toInt() != 0)
-        return fail(1005, QStringLiteral("account deleted"));
+    // Unknown phones (including ones held only by deleted users) also get a code:
+    // it is what lets the auto-registration login verify them.
     const QString code = QStringLiteral("%1")
         .arg(QRandomGenerator::global()->bounded(1000000), 6, 10, QLatin1Char('0'));
     QSqlQuery up(db);
@@ -249,14 +244,12 @@ Response hPasswordReset(const QJsonObject &p, Session &, QSqlDatabase db)
         return fail(2001, QStringLiteral("invalid newPassword"));
     const QString newPassword = p.value(QStringLiteral("newPassword")).toString();
     QSqlQuery q(db);
-    q.prepare(QStringLiteral("SELECT userId, deleted FROM users WHERE phone = ?"));
+    q.prepare(QStringLiteral("SELECT userId FROM users WHERE phone = ? AND deleted = 0"));
     q.addBindValue(phone);
     if (!exec(q))
         return fail(5000, QStringLiteral("internal error"));
     if (!q.next())
         return fail(2002, QStringLiteral("user not found"));
-    if (q.value(1).toInt() != 0)
-        return fail(1005, QStringLiteral("account deleted"));
     const CodeCheck check = consumeSmsCode(db, phone, code);
     if (check == CodeCheck::DbError)
         return fail(5000, QStringLiteral("internal error"));
@@ -548,6 +541,17 @@ Response hReserve(const QJsonObject &p, Session &s, QSqlDatabase db)
         return fail(2001, QStringLiteral("invalid pileId"));
     if (!db.transaction())
         return fail(5000, QStringLiteral("internal error"));
+    QSqlQuery bal(db);
+    bal.prepare(QStringLiteral("SELECT balanceFen FROM users WHERE userId = ?"));
+    bal.addBindValue(s.userId);
+    if (!exec(bal) || !bal.next()) {
+        db.rollback();
+        return fail(5000, QStringLiteral("internal error"));
+    }
+    if (bal.value(0).toLongLong() <= 0) {
+        db.rollback();
+        return fail(3004, QStringLiteral("balance too low, please recharge first"));
+    }
     QSqlQuery q(db);
     q.prepare(QStringLiteral("SELECT orderId FROM orders WHERE userId = ?"
                              " AND status IN ('reserved', 'charging', 'pending_payment') LIMIT 1"));
@@ -1392,7 +1396,7 @@ Response hUserAdd(const QJsonObject &p, Session &, QSqlDatabase db)
         password = p.value(QStringLiteral("password")).toString();
     }
     QSqlQuery dup(db);
-    dup.prepare(QStringLiteral("SELECT COUNT(*) FROM users WHERE phone = ?"));
+    dup.prepare(QStringLiteral("SELECT COUNT(*) FROM users WHERE phone = ? AND deleted = 0"));
     dup.addBindValue(phone);
     if (!exec(dup) || !dup.next())
         return fail(5000, QStringLiteral("internal error"));
