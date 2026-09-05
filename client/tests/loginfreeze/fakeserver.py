@@ -50,7 +50,7 @@ def handle(req):
     if t == "user_profile_get":
         return 0, "ok", {"user": user(phone, True)}
     if t == "active_order_get":
-        return 0, "ok", {"order": None}
+        return 0, "ok", {"orders": []}
     if t == "user_order_list":
         return 0, "ok", {"orders": [], "total": 0, "page": 1, "pageSize": 10}
     if t in ("nearby_station_list", "station_list"):
