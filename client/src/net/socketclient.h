@@ -24,6 +24,8 @@ public:
     ~SocketClient() override;
 
     void open(const QString &host, quint16 port);
+    // 取消进行中的连接尝试：不产生 connectFailed，也不触发自动重连
+    void cancelConnect();
     void logout();
     bool isConnected() const;
     bool isLoggedIn() const;
@@ -38,6 +40,8 @@ public:
 
 signals:
     void connected();
+    // 连接建立阶段失败（拒绝/超时等，此时 Qt 不会发 disconnected）；排队发射，槽内可安全弹模态框
+    void connectFailed(const QString &reason);
     void connectionLost(const QString &reason);
     void reconnectScheduled(int msec);
     void reloginFinished(bool ok, const QString &msg, const QJsonObject &data);
@@ -47,6 +51,7 @@ private:
     void onReadyRead();
     void onDisconnected();
     void onSocketError();
+    void onConnectTimeout();
     void handleLine(const QByteArray &line);
     void failAllPending(int code, const QString &msg);
     void invokeCallback(const ResponseCallback &cb, int code, const QString &msg,
@@ -55,6 +60,7 @@ private:
     void autoRelogin();
     void setPending(qint64 seq, const ResponseCallback &cb);
     ResponseCallback takePending(qint64 seq);
+    void queueConnectFailed(const QString &reason);
 
     QTcpSocket *m_socket;
     QByteArray m_buffer;
@@ -63,6 +69,7 @@ private:
     QHash<qint64, QTimer *> m_timers;
     QTimer *m_pingTimer;
     QTimer *m_reconnectTimer;
+    QTimer *m_connectTimer;
     QString m_host;
     quint16 m_port = 8888;
     QString m_phone;
@@ -71,5 +78,6 @@ private:
     bool m_loggedIn = false;
     bool m_manualClose = false;
     bool m_reloginPending = false;
+    bool m_connectInProgress = false;
     QString m_lastError;
 };

@@ -8,7 +8,16 @@ namespace {
 constexpr int kRequestTimeoutMs = 15000;
 constexpr int kPingIntervalMs = 15000;
 constexpr int kReconnectDelayMs = 3000;
+constexpr int kConnectTimeoutMs = 8000;
 constexpr qint64 kMaxMessageBytes = 2 * 1024 * 1024;
+
+// 连接建立超时：默认 8s，可用 EVCP_CONNECT_TIMEOUT_MS 覆盖（测试用）
+int connectTimeoutMs()
+{
+    bool ok = false;
+    const int v = qEnvironmentVariableIntValue("EVCP_CONNECT_TIMEOUT_MS", &ok);
+    return (ok && v > 0) ? v : kConnectTimeoutMs;
+}
 }
 
 SocketClient::SocketClient(QObject *parent)
@@ -16,13 +25,17 @@ SocketClient::SocketClient(QObject *parent)
     , m_socket(new QTcpSocket(this))
     , m_pingTimer(new QTimer(this))
     , m_reconnectTimer(new QTimer(this))
+    , m_connectTimer(new QTimer(this))
 {
     m_pingTimer->setInterval(kPingIntervalMs);
     m_reconnectTimer->setSingleShot(true);
+    m_connectTimer->setSingleShot(true);
 
     connect(m_socket, &QTcpSocket::readyRead, this, &SocketClient::onReadyRead);
     connect(m_socket, &QTcpSocket::disconnected, this, &SocketClient::onDisconnected);
     connect(m_socket, &QTcpSocket::connected, this, [this]() {
+        m_connectInProgress = false;
+        m_connectTimer->stop();
         m_pingTimer->start();
         emit connected();
         if (!m_phone.isEmpty() && m_loggedIn && !m_reloginPending)
@@ -39,6 +52,7 @@ SocketClient::SocketClient(QObject *parent)
         if (m_socket->state() == QAbstractSocket::UnconnectedState)
             open(m_host, m_port);
     });
+    connect(m_connectTimer, &QTimer::timeout, this, &SocketClient::onConnectTimeout);
 }
 
 SocketClient::~SocketClient() = default;
@@ -51,11 +65,24 @@ void SocketClient::open(const QString &host, quint16 port)
     m_buffer.clear();
     m_nextSeq = 1;
     failAllPending(kErrNotConnected, QStringLiteral("连接已重建，请求未完成"));
+    m_connectTimer->stop();
     if (m_socket->state() != QAbstractSocket::UnconnectedState) {
         const QSignalBlocker blocker(m_socket);
         m_socket->abort();
     }
+    m_connectInProgress = true;
+    m_connectTimer->start(connectTimeoutMs());
     m_socket->connectToHost(host, port);
+}
+
+void SocketClient::cancelConnect()
+{
+    if (!m_connectInProgress)
+        return;
+    m_connectInProgress = false;
+    m_connectTimer->stop();
+    const QSignalBlocker blocker(m_socket);
+    m_socket->abort();
 }
 
 void SocketClient::logout()
@@ -67,6 +94,8 @@ void SocketClient::logout()
     m_code.clear();
     m_pingTimer->stop();
     m_reconnectTimer->stop();
+    m_connectTimer->stop();
+    m_connectInProgress = false;
     failAllPending(kErrNotConnected, QStringLiteral("已退出登录"));
     m_socket->disconnectFromHost();
     if (m_socket->state() != QAbstractSocket::UnconnectedState)
@@ -260,6 +289,39 @@ void SocketClient::onDisconnected()
 void SocketClient::onSocketError()
 {
     m_lastError = m_socket->errorString();
+    if (!m_connectInProgress)
+        return; // 已建立连接上的错误：随后的 disconnected 会统一收尾
+    // 连接建立阶段失败（拒绝/不可达等）：Qt 只发 errorOccurred，不发 disconnected，
+    // 必须在此收尾，否则等待 connected 的上层流程（登录/获取验证码）会永远挂起。
+    m_connectInProgress = false;
+    m_connectTimer->stop();
+    const QString reason = m_lastError.isEmpty() ? QStringLiteral("连接失败") : m_lastError;
+    m_lastError.clear();
+    queueConnectFailed(reason);
+    if (m_loggedIn) // 已登录后的自动重连失败：按周期继续重试
+        startReconnect();
+}
+
+void SocketClient::onConnectTimeout()
+{
+    if (!m_connectInProgress)
+        return;
+    m_connectInProgress = false;
+    {
+        const QSignalBlocker blocker(m_socket);
+        m_socket->abort();
+    }
+    queueConnectFailed(QStringLiteral("连接超时，服务器无响应"));
+    if (m_loggedIn)
+        startReconnect();
+}
+
+void SocketClient::queueConnectFailed(const QString &reason)
+{
+    // 与业务回调同理排队发射：槽里可能弹模态框，不能在 errorOccurred/定时器栈内直接执行
+    QTimer::singleShot(0, this, [this, reason]() {
+        emit connectFailed(reason);
+    });
 }
 
 void SocketClient::startReconnect()

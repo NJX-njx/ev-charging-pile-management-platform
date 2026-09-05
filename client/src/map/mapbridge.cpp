@@ -55,6 +55,7 @@ void MapBridge::geocode(const QString &address, GeocodeCallback cb)
     if (m_page && m_ready)
         runPending();
 #else
+    Q_UNUSED(address);
     cb(false, 0, 0, QStringLiteral("本构建未包含 WebEngine 模块"));
 #endif
 }
