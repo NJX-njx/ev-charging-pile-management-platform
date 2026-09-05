@@ -84,10 +84,12 @@ PileManagePage::PileManagePage(SocketClient *client, QWidget *parent)
     connect(m_disableBtn, &QPushButton::clicked, this, &PileManagePage::onDisableClicked);
     connect(m_activeOrderBtn, &QPushButton::clicked, this, &PileManagePage::onShowActiveOrder);
     connect(m_table, &QTableWidget::itemSelectionChanged, this, &PileManagePage::updateActionButtons);
-    // 在用行双击查看占用订单
+    // 在用行双击查看占用订单（已删除行仅历史查看，不响应）
     connect(m_table, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
         QTableWidgetItem *statusItem = m_table->item(row, 4);
-        if (statusItem && statusItem->data(Qt::UserRole).toString() == QStringLiteral("in_use"))
+        QTableWidgetItem *codeItem = m_table->item(row, 0);
+        const bool deleted = codeItem && codeItem->data(Qt::UserRole + 1).toBool();
+        if (!deleted && statusItem && statusItem->data(Qt::UserRole).toString() == QStringLiteral("in_use"))
             onShowActiveOrder();
     });
     // 兜底：点击当前行不产生选中变化信号时，也要保证该行被选中且按钮状态同步
