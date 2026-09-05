@@ -58,6 +58,8 @@ ProfileEditDialog::ProfileEditDialog(SocketClient *client, const UserInfo &user,
     m_nicknameEdit = new QLineEdit(this);
     m_nicknameEdit->setMaxLength(20);
     m_nicknameEdit->setPlaceholderText(QStringLiteral("昵称（1-20 个字符）"));
+    // 昵称允许中文：显式 ImhNone，输入法不受限
+    m_nicknameEdit->setInputMethodHints(Qt::ImhNone);
     m_nicknameEdit->setText(m_user.nickname);
     root->addWidget(m_nicknameEdit);
 

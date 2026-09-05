@@ -10,6 +10,7 @@
 #include <QVBoxLayout>
 
 #include "net/socketclient.h"
+#include "ui/passwordtoggle.h"
 #include "ui/smscodebutton.h"
 #include "ui/uienums.h"
 
@@ -35,6 +36,7 @@ ResetPasswordDialog::ResetPasswordDialog(SocketClient *client, QWidget *parent)
     m_phoneEdit = new QLineEdit(this);
     m_phoneEdit->setPlaceholderText(QStringLiteral("请输入 11 位手机号"));
     m_phoneEdit->setMaxLength(11);
+    m_phoneEdit->setInputMethodHints(Qt::ImhDigitsOnly);
     root->addWidget(m_phoneEdit);
 
     auto *codeRow = new QHBoxLayout();
@@ -42,6 +44,7 @@ ResetPasswordDialog::ResetPasswordDialog(SocketClient *client, QWidget *parent)
     m_codeEdit = new QLineEdit(this);
     m_codeEdit->setPlaceholderText(QStringLiteral("6 位短信验证码"));
     m_codeEdit->setMaxLength(6);
+    m_codeEdit->setInputMethodHints(Qt::ImhDigitsOnly);
     m_codeButton = new SmsCodeButton(m_client, m_phoneEdit, this);
     codeRow->addWidget(m_codeEdit, 1);
     codeRow->addWidget(m_codeButton, 0);
@@ -51,7 +54,7 @@ ResetPasswordDialog::ResetPasswordDialog(SocketClient *client, QWidget *parent)
     m_passwordEdit->setEchoMode(QLineEdit::Password);
     m_passwordEdit->setPlaceholderText(QStringLiteral("新密码（6-20 位，不含空白字符）"));
     m_passwordEdit->setMaxLength(20);
-    root->addWidget(m_passwordEdit);
+    root->addWidget(ui::withPasswordToggle(m_passwordEdit, this));
 
     m_confirmEdit = new QLineEdit(this);
     m_confirmEdit->setEchoMode(QLineEdit::Password);

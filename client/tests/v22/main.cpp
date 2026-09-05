@@ -7,10 +7,14 @@
 //   order_flow         状态流转：开始/停止/结算/取消后整表刷新、卡片消失
 //   cost_tick          charging 卡片「已充时长｜预计花费」每秒跳动且数值与公式一致
 //   profile_edit       编辑资料：昵称合并提交、无变更不发请求、头像文件校验
-//   nav_url            导航对话框：起点/终点展示、点「导航」后才加载 routeplan URL、
-//                      fromcoord/tocoord 为显式坐标、驾车/步行切换
-//   region_select      区域下拉定位：选中即以预设坐标发 nearby_station_list
+//   nav_url            导航对话框：默认定位（北京市中心）直接导航，起点/终点展示、
+//                      点「导航」后才加载 routeplan URL、驾车/步行切换
+//   region_select      「全部区域（默认）」进入即以北京市中心发 nearby_station_list；
+//                      切换到房山区（良乡）后以其区中心坐标定位
 //   reserve_then_card  预约成功后充电页出现新订单卡片
+//   pwd_toggle         密码「显示/隐藏」切换改变 echoMode（登录页/忘记密码/设改密）
+//   ime_hints          各输入框 inputMethodHints：地址/昵称不限（中文 IME），
+//                      手机号/验证码/端口为数字、经纬度/金额为数值
 
 #include <QApplication>
 #include <QComboBox>
@@ -32,16 +36,22 @@
 #include <QRegularExpression>
 #include <QTest>
 #include <QTimer>
+#include <QToolButton>
 #include <QUrlQuery>
 
 #include "mainwindow.h"
 #include "map/tencentmapkey.h"
 #include "model/appconfig.h"
+#include "net/socketclient.h"
 #include "pages/chargingpage.h"
 #include "pages/findstationpage.h"
 #include "pages/loginpage.h"
 #include "pages/mypage.h"
 #include "pages/navigationdialog.h"
+#include "pages/passworddialog.h"
+#include "pages/profileeditdialog.h"
+#include "pages/rechargedialog.h"
+#include "pages/resetpassworddialog.h"
 #include "ui/avatarutils.h"
 
 #ifdef EVCP_HAVE_WEBENGINE
@@ -63,6 +73,21 @@ static QLineEdit *findEdit(QWidget *root, const QString &placeholder)
     for (QLineEdit *e : edits)
         if (e->placeholderText() == placeholder)
             return e;
+    return nullptr;
+}
+
+// 密码「显示/隐藏」切换按钮（ui::withPasswordToggle 生成）：只查直接子控件，
+// 避免把同行其他输入框的切换按钮误算到未包裹的输入框头上
+static QToolButton *passwordToggleOf(QLineEdit *edit)
+{
+    if (!edit || !edit->parentWidget())
+        return nullptr;
+    const auto children = edit->parentWidget()->children();
+    for (QObject *c : children) {
+        auto *t = qobject_cast<QToolButton *>(c);
+        if (t && t->objectName() == QStringLiteral("passwordToggle"))
+            return t;
+    }
     return nullptr;
 }
 
@@ -590,8 +615,9 @@ int main(int argc, char *argv[])
                 doLogin();
                 actStep = 1;
             } else if (actStep == 1 && g_loginOk) {
-                regionCombo->activated(1); // 沙河口区 · 星海广场 (121.594, 38.881)
-                log(QStringLiteral("selected region 1"));
+                // 不选区域：默认定位「全部区域（默认）」= 北京市中心 (116.397, 39.909)，
+                // 进入找站页自动查询，站点卡片渲染即代表默认定位已生效
+                log(QStringLiteral("logged in, waiting default-region stations"));
                 actStep = 2;
             } else if (actStep == 2) {
                 const auto cards = w.findChildren<QFrame *>(QStringLiteral("stationCard"));
@@ -622,9 +648,9 @@ int main(int argc, char *argv[])
                     else if (l->text().startsWith(QStringLiteral("终点：")))
                         toText = l->text();
                 }
-                if (!fromText.contains(QStringLiteral("38.881000"))
-                    || !fromText.contains(QStringLiteral("121.594000"))
-                    || !fromText.contains(QStringLiteral("星海广场"))
+                if (!fromText.contains(QStringLiteral("39.909000"))
+                    || !fromText.contains(QStringLiteral("116.397000"))
+                    || !fromText.contains(QStringLiteral("全部区域"))
                     || !toText.contains(QStringLiteral("星海广场站"))
                     || !toText.contains(QStringLiteral("38.883000"))
                     || !toText.contains(QStringLiteral("121.596000"))) {
@@ -644,12 +670,12 @@ int main(int argc, char *argv[])
             } else if (actStep == 4) {
                 // 静态断言：routeplan URI 参数精确符合腾讯 URI API（可离线验证的核心项）
                 const QUrl expectedDrive = NavigationDialog::buildRouteUrl(
-                    QStringLiteral("drive"), 121.594, 38.881, 121.596, 38.883,
-                    QStringLiteral("星海广场站"), QStringLiteral("沙河口区 · 星海广场"));
+                    QStringLiteral("drive"), 116.397, 39.909, 121.596, 38.883,
+                    QStringLiteral("星海广场站"), QStringLiteral("全部区域（默认）"));
                 const QUrl literalDrive(
                     QStringLiteral("https://apis.map.qq.com/uri/v1/routeplan?type=drive"
-                                   "&from=沙河口区 · 星海广场"
-                                   "&fromcoord=38.881000,121.594000"
+                                   "&from=全部区域（默认）"
+                                   "&fromcoord=39.909000,116.397000"
                                    "&to=星海广场站"
                                    "&tocoord=38.883000,121.596000"
                                    "&referer=") + mapconfig::kTencentMapKey);
@@ -687,7 +713,7 @@ int main(int argc, char *argv[])
                 bool coordsAccepted = false;
                 for (const QUrl &u : navUrls) {
                     const QString s = QUrl::fromPercentEncoding(u.toString().toUtf8());
-                    if (s.contains(QStringLiteral("121.594")) && s.contains(QStringLiteral("38.881"))
+                    if (s.contains(QStringLiteral("116.397")) && s.contains(QStringLiteral("39.909"))
                         && s.contains(QStringLiteral("121.596")) && s.contains(QStringLiteral("38.883")))
                         coordsAccepted = true;
                 }
@@ -707,12 +733,12 @@ int main(int argc, char *argv[])
                 }
             } else if (actStep == 5) {
                 const QUrl expectedWalk = NavigationDialog::buildRouteUrl(
-                    QStringLiteral("walk"), 121.594, 38.881, 121.596, 38.883,
-                    QStringLiteral("星海广场站"), QStringLiteral("沙河口区 · 星海广场"));
+                    QStringLiteral("walk"), 116.397, 39.909, 121.596, 38.883,
+                    QStringLiteral("星海广场站"), QStringLiteral("全部区域（默认）"));
                 const QUrl literalWalk(
                     QStringLiteral("https://apis.map.qq.com/uri/v1/routeplan?type=walk"
-                                   "&from=沙河口区 · 星海广场"
-                                   "&fromcoord=38.881000,121.594000"
+                                   "&from=全部区域（默认）"
+                                   "&fromcoord=39.909000,116.397000"
                                    "&to=星海广场站"
                                    "&tocoord=38.883000,121.596000"
                                    "&referer=") + mapconfig::kTencentMapKey);
@@ -724,7 +750,7 @@ int main(int argc, char *argv[])
                 // 步行切换后发起了第二次加载（联网时可见新的提交 URL，type 随方式变化）
                 if (navUrls.size() >= 2 || elapsed() - stepSince > 10000) {
                     finish(0, QStringLiteral("routeplan URL 参数正确（type/fromcoord/tocoord/referer），"
-                                             "点击「导航」后才加载，驾车/步行切换均触发真实路线规划"));
+                                             "默认定位（北京市中心）直接导航，驾车/步行切换均触发真实路线规划"));
                     return;
                 }
             }
@@ -737,24 +763,52 @@ int main(int argc, char *argv[])
                 doLogin();
                 actStep = 1;
             } else if (actStep == 1 && g_loginOk) {
-                regionCombo->activated(2); // 中山区 · 青泥洼桥 (121.633, 38.917)
-                log(QStringLiteral("selected region 2"));
+                // 断言下拉结构：第一项「全部区域（默认）」+ 6 个北京预设区域
+                if (regionCombo->count() != 7
+                    || regionCombo->itemText(0) != QStringLiteral("全部区域（默认）")
+                    || regionCombo->itemText(1) != QStringLiteral("房山区（良乡）")
+                    || regionCombo->itemText(6) != QStringLiteral("西城区")) {
+                    finish(2, QStringLiteral("区域下拉项不正确：共 %1 项，首项「%2」")
+                                  .arg(regionCombo->count()).arg(regionCombo->itemText(0)));
+                    return;
+                }
+                // 「全部区域（默认）」：进入找站页即自动以北京市中心 (116.397, 39.909) 查询
+                const auto reqs = requestsOf(QStringLiteral("nearby_station_list"));
+                bool defaultFired = false;
+                for (const QJsonObject &r : reqs) {
+                    const QJsonObject p = r.value(QStringLiteral("payload")).toObject();
+                    if (qAbs(p.value(QStringLiteral("lng")).toDouble() - 116.397) < 1e-6
+                        && qAbs(p.value(QStringLiteral("lat")).toDouble() - 39.909) < 1e-6)
+                        defaultFired = true;
+                }
+                if (!defaultFired)
+                    return; // 等默认查询发出
+                if (lngEdit->text() != QStringLiteral("116.397000")
+                    || latEdit->text() != QStringLiteral("39.909000")) {
+                    finish(2, QStringLiteral("默认定位未回填北京市中心坐标：%1, %2")
+                                  .arg(lngEdit->text(), latEdit->text()));
+                    return;
+                }
+                if (w.findChildren<QFrame *>(QStringLiteral("stationCard")).isEmpty())
+                    return; // 等默认站点卡片渲染
+                log(QStringLiteral("默认定位（北京市中心）已自动查询并渲染站点"));
+                regionCombo->activated(1); // 房山区（良乡） (116.14, 39.74)
+                log(QStringLiteral("selected region 1 房山区（良乡）"));
                 actStep = 2;
             } else if (actStep == 2) {
                 const auto reqs = requestsOf(QStringLiteral("nearby_station_list"));
                 for (const QJsonObject &r : reqs) {
                     const QJsonObject p = r.value(QStringLiteral("payload")).toObject();
-                    if (qAbs(p.value(QStringLiteral("lng")).toDouble() - 121.633) < 1e-6
-                        && qAbs(p.value(QStringLiteral("lat")).toDouble() - 38.917) < 1e-6) {
-                        if (lngEdit->text() != QStringLiteral("121.633000")
-                            || latEdit->text() != QStringLiteral("38.917000")) {
+                    if (qAbs(p.value(QStringLiteral("lng")).toDouble() - 116.14) < 1e-6
+                        && qAbs(p.value(QStringLiteral("lat")).toDouble() - 39.74) < 1e-6) {
+                        if (lngEdit->text() != QStringLiteral("116.140000")
+                            || latEdit->text() != QStringLiteral("39.740000")) {
                             finish(2, QStringLiteral("经纬度输入框未回填预设坐标：%1, %2")
                                           .arg(lngEdit->text(), latEdit->text()));
                             return;
                         }
-                        if (w.findChildren<QFrame *>(QStringLiteral("stationCard")).isEmpty())
-                            return; // 等站点卡片渲染
-                        finish(0, QStringLiteral("区域下拉即以预设坐标 (121.633, 38.917) 定位并查出站点"));
+                        finish(0, QStringLiteral("「全部区域（默认）」进入即以北京市中心 (116.397, 39.909) 查出站点；"
+                                                 "切换房山区（良乡）后以其区中心 (116.14, 39.74) 定位"));
                         return;
                     }
                 }
@@ -802,6 +856,125 @@ int main(int argc, char *argv[])
                     finish(0, QStringLiteral("预约成功后充电页出现新订单卡片（P-1001 已预约）"));
                     return;
                 }
+            }
+        } else if (scenario == QLatin1String("pwd_toggle")) {
+            // 全程离线：只检查控件结构与 echoMode 切换，不发任何请求
+            if (actStep == 0) {
+                // 登录页密码框
+                QToolButton *t = passwordToggleOf(pwdEdit);
+                if (!t || pwdEdit->echoMode() != QLineEdit::Password
+                    || t->text() != QStringLiteral("显示")) {
+                    finish(2, QStringLiteral("登录页密码框缺少「显示」切换或初始回显不是 Password"));
+                    return;
+                }
+                t->click();
+                if (pwdEdit->echoMode() != QLineEdit::Normal
+                    || t->text() != QStringLiteral("隐藏")) {
+                    finish(2, QStringLiteral("登录页点击「显示」后 echoMode 未变为 Normal"));
+                    return;
+                }
+                t->click();
+                if (pwdEdit->echoMode() != QLineEdit::Password
+                    || t->text() != QStringLiteral("显示")) {
+                    finish(2, QStringLiteral("登录页再次点击后 echoMode 未恢复 Password"));
+                    return;
+                }
+                log(QStringLiteral("登录页密码「显示/隐藏」切换 OK"));
+                actStep = 1;
+            } else if (actStep == 1) {
+                // 忘记密码对话框：新密码框有切换，确认框没有
+                SocketClient dummy;
+                ResetPasswordDialog dlg(&dummy);
+                QLineEdit *newEdit = findEdit(&dlg, QStringLiteral("新密码（6-20 位，不含空白字符）"));
+                QLineEdit *confirmEdit = findEdit(&dlg, QStringLiteral("再次输入新密码"));
+                QToolButton *t = passwordToggleOf(newEdit);
+                if (!newEdit || !confirmEdit || !t) {
+                    finish(2, QStringLiteral("忘记密码对话框新密码框缺少「显示」切换"));
+                    return;
+                }
+                if (passwordToggleOf(confirmEdit)) {
+                    finish(2, QStringLiteral("忘记密码对话框确认框不应有切换按钮"));
+                    return;
+                }
+                if (newEdit->echoMode() != QLineEdit::Password) {
+                    finish(2, QStringLiteral("忘记密码新密码框初始回显不是 Password"));
+                    return;
+                }
+                t->click();
+                if (newEdit->echoMode() != QLineEdit::Normal) {
+                    finish(2, QStringLiteral("忘记密码点击「显示」后 echoMode 未变为 Normal"));
+                    return;
+                }
+                log(QStringLiteral("忘记密码对话框新密码切换 OK"));
+                actStep = 2;
+            } else if (actStep == 2) {
+                // 设密/改密对话框：新密码框有切换；改密时原密码框、确认框均没有
+                SocketClient dummy;
+                PasswordDialog changeDlg(&dummy, true, false);
+                QLineEdit *oldEdit = findEdit(&changeDlg, QStringLiteral("请输入原密码"));
+                QLineEdit *newEdit = findEdit(&changeDlg, QStringLiteral("新密码（6-20 位，不含空白字符）"));
+                QLineEdit *confirmEdit = findEdit(&changeDlg, QStringLiteral("再次输入新密码"));
+                if (!oldEdit || !newEdit || !confirmEdit || !passwordToggleOf(newEdit)
+                    || passwordToggleOf(oldEdit) || passwordToggleOf(confirmEdit)) {
+                    finish(2, QStringLiteral("修改密码对话框仅新密码框应有「显示」切换"));
+                    return;
+                }
+                PasswordDialog setDlg(&dummy, false, true);
+                QLineEdit *firstNewEdit = findEdit(&setDlg, QStringLiteral("新密码（6-20 位，不含空白字符）"));
+                if (!firstNewEdit || !passwordToggleOf(firstNewEdit)) {
+                    finish(2, QStringLiteral("首次设密对话框新密码框缺少「显示」切换"));
+                    return;
+                }
+                finish(0, QStringLiteral("密码「显示/隐藏」切换覆盖登录页/忘记密码/设密/改密，echoMode 随点击切换"));
+                return;
+            }
+        } else if (scenario == QLatin1String("ime_hints")) {
+            // 全程离线：代码层确认各输入框 inputMethodHints（IME 合成行为需真机确认）
+            if (actStep == 0) {
+                QLineEdit *addrEdit = findEdit(findPage, QStringLiteral("输入区域或地址，如：海淀区中关村"));
+                QLineEdit *codeEdit = findEdit(&w, QStringLiteral("6 位短信验证码"));
+                QLineEdit *portEdit = findEdit(&w, QStringLiteral("端口"));
+                if (!addrEdit || !codeEdit || !portEdit) {
+                    finish(2, QStringLiteral("HARNESS-ERROR: 关键输入框未找到"));
+                    return;
+                }
+                // 地址输入框：输入法不受限（支持中文 IME）
+                if (addrEdit->inputMethodHints() != Qt::ImhNone) {
+                    finish(2, QStringLiteral("地址输入框输入法受限：hints=%1")
+                                  .arg(static_cast<int>(addrEdit->inputMethodHints())));
+                    return;
+                }
+                // 手机号/验证码/端口：仅数字；经纬度：数值
+                if (phoneEdit->inputMethodHints() != Qt::ImhDigitsOnly
+                    || codeEdit->inputMethodHints() != Qt::ImhDigitsOnly
+                    || portEdit->inputMethodHints() != Qt::ImhDigitsOnly) {
+                    finish(2, QStringLiteral("手机号/验证码/端口框未限制为数字输入"));
+                    return;
+                }
+                if (lngEdit->inputMethodHints() != Qt::ImhFormattedNumbersOnly
+                    || latEdit->inputMethodHints() != Qt::ImhFormattedNumbersOnly) {
+                    finish(2, QStringLiteral("经纬度框未限制为数值输入"));
+                    return;
+                }
+                // 资料编辑昵称框：输入法不受限（支持中文 IME）
+                SocketClient dummy;
+                ProfileEditDialog profileDlg(&dummy, UserInfo{});
+                const auto profileEdits = profileDlg.findChildren<QLineEdit *>();
+                if (profileEdits.size() != 1
+                    || profileEdits.first()->inputMethodHints() != Qt::ImhNone) {
+                    finish(2, QStringLiteral("昵称输入框输入法受限"));
+                    return;
+                }
+                // 充值金额框：数值
+                RechargeDialog rechargeDlg(&dummy);
+                QLineEdit *amountEdit = rechargeDlg.findChild<QLineEdit *>();
+                if (!amountEdit || amountEdit->inputMethodHints() != Qt::ImhFormattedNumbersOnly) {
+                    finish(2, QStringLiteral("充值金额框未限制为数值输入"));
+                    return;
+                }
+                finish(0, QStringLiteral("地址/昵称输入法不受限（ImhNone，支持中文 IME）；"
+                                         "手机号/验证码/端口仅数字，经纬度/金额为数值"));
+                return;
             }
         }
 

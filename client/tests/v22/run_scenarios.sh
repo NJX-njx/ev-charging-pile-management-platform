@@ -36,6 +36,8 @@ run cost_tick multi
 run profile_edit multi
 run region_select multi
 run reserve_then_card empty
+run pwd_toggle multi
+run ime_hints multi
 run nav_url multi --deadline-ms 45000
 
 echo "===== [$LABEL] summary: PASS=$PASS FAIL=$FAIL ====="

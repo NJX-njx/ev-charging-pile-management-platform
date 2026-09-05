@@ -44,6 +44,7 @@ HEADERS += \
     $$SRC/src/map/mapbridge.h \
     $$SRC/src/ui/uienums.h \
     $$SRC/src/ui/avatarutils.h \
+    $$SRC/src/ui/passwordtoggle.h \
     $$SRC/src/ui/smscodebutton.h \
     $$SRC/src/pages/loginpage.h \
     $$SRC/src/pages/resetpassworddialog.h \

@@ -14,6 +14,7 @@
 #include "model/appconfig.h"
 #include "net/socketclient.h"
 #include "pages/resetpassworddialog.h"
+#include "ui/passwordtoggle.h"
 #include "ui/smscodebutton.h"
 
 LoginPage::LoginPage(SocketClient *client, QWidget *parent)
@@ -58,6 +59,7 @@ LoginPage::LoginPage(SocketClient *client, QWidget *parent)
     m_phoneEdit = new QLineEdit(card);
     m_phoneEdit->setPlaceholderText(QStringLiteral("请输入 11 位手机号"));
     m_phoneEdit->setMaxLength(11);
+    m_phoneEdit->setInputMethodHints(Qt::ImhDigitsOnly);
     cardLayout->addWidget(m_phoneEdit);
 
     m_formStack = new QStackedWidget(card);
@@ -69,7 +71,7 @@ LoginPage::LoginPage(SocketClient *client, QWidget *parent)
     m_passwordEdit->setEchoMode(QLineEdit::Password);
     m_passwordEdit->setPlaceholderText(QStringLiteral("请输入密码"));
     m_passwordEdit->setMaxLength(20);
-    passwordLayout->addWidget(m_passwordEdit);
+    passwordLayout->addWidget(ui::withPasswordToggle(m_passwordEdit, passwordForm));
     m_formStack->addWidget(passwordForm);
 
     auto *codeForm = new QWidget(m_formStack);
@@ -79,6 +81,7 @@ LoginPage::LoginPage(SocketClient *client, QWidget *parent)
     m_codeEdit = new QLineEdit(codeForm);
     m_codeEdit->setPlaceholderText(QStringLiteral("6 位短信验证码"));
     m_codeEdit->setMaxLength(6);
+    m_codeEdit->setInputMethodHints(Qt::ImhDigitsOnly);
     m_codeButton = new SmsCodeButton(m_client, m_phoneEdit, codeForm);
     codeLayout->addWidget(m_codeEdit, 1);
     codeLayout->addWidget(m_codeButton, 0);
@@ -111,6 +114,7 @@ LoginPage::LoginPage(SocketClient *client, QWidget *parent)
     m_portEdit = new QLineEdit(card);
     m_portEdit->setPlaceholderText(QStringLiteral("端口"));
     m_portEdit->setMaxLength(5);
+    m_portEdit->setInputMethodHints(Qt::ImhDigitsOnly);
     m_portEdit->setFixedWidth(72);
     serverRow->addWidget(m_hostEdit, 1);
     serverRow->addWidget(m_portEdit, 0);

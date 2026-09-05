@@ -13,6 +13,7 @@
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QShowEvent>
 #include <QVBoxLayout>
 
 #include "map/mapbridge.h"
@@ -25,19 +26,23 @@
 namespace {
 
 // 预设区域定位（说明书要求「下拉选择区域或手动输入地址进行定位（软件层面模拟GPS）」）：
-// 大连常用区域，坐标硬编码，选中即以该坐标查找附近站点
+// 北京常用区域，坐标硬编码（区中心），选中即以该坐标查找附近站点
 struct PresetRegion {
     const char *name;
     double lng;
     double lat;
 };
 
+// 下拉第一项「全部区域（默认）」的定位点：北京市中心
+constexpr PresetRegion kDefaultRegion = {"全部区域（默认）", 116.397, 39.909};
+
 constexpr PresetRegion kPresetRegions[] = {
-    {"沙河口区 · 星海广场", 121.594, 38.881},
-    {"中山区 · 青泥洼桥", 121.633, 38.917},
-    {"沙河口区 · 西安路", 121.599, 38.917},
-    {"甘井子区 · 大连北站", 121.588, 38.996},
-    {"高新园区 · 七贤岭", 121.517, 38.865},
+    {"房山区（良乡）", 116.14, 39.74},
+    {"海淀区", 116.30, 39.98},
+    {"朝阳区", 116.48, 39.95},
+    {"丰台区", 116.28, 39.86},
+    {"东城区", 116.42, 39.93},
+    {"西城区", 116.37, 39.91},
 };
 
 class StationCard : public QFrame
@@ -133,7 +138,10 @@ FindStationPage::FindStationPage(SocketClient *client, QWidget *parent)
     auto *regionLabel = new QLabel(QStringLiteral("区域定位"), searchCard);
     regionLabel->setObjectName(QStringLiteral("hint"));
     m_regionCombo = new QComboBox(searchCard);
-    m_regionCombo->addItem(QStringLiteral("选择区域（模拟 GPS 定位）"));
+    // 第一项「全部区域（默认）」也带坐标（北京市中心）：不选具体区域时默认按它定位，
+    // 进入找站页即有站点列表（见 showEvent）
+    m_regionCombo->addItem(QString::fromUtf8(kDefaultRegion.name),
+                           QPointF(kDefaultRegion.lng, kDefaultRegion.lat));
     for (const PresetRegion &r : kPresetRegions)
         m_regionCombo->addItem(QString::fromUtf8(r.name), QPointF(r.lng, r.lat));
     regionRow->addWidget(regionLabel, 0);
@@ -142,7 +150,9 @@ FindStationPage::FindStationPage(SocketClient *client, QWidget *parent)
 
     auto *addrRow = new QHBoxLayout();
     m_addressEdit = new QLineEdit(searchCard);
-    m_addressEdit->setPlaceholderText(QStringLiteral("输入区域或地址，如：沙河口区星海广场"));
+    m_addressEdit->setPlaceholderText(QStringLiteral("输入区域或地址，如：海淀区中关村"));
+    // 地址允许中文：显式 ImhNone，输入法不受限
+    m_addressEdit->setInputMethodHints(Qt::ImhNone);
     m_geocodeButton = new QPushButton(QStringLiteral("解析地址"), searchCard);
     m_geocodeButton->setProperty("class", QStringLiteral("small"));
     addrRow->addWidget(m_addressEdit, 1);
@@ -159,8 +169,10 @@ FindStationPage::FindStationPage(SocketClient *client, QWidget *parent)
     auto *coordRow = new QHBoxLayout();
     m_lngEdit = new QLineEdit(searchCard);
     m_lngEdit->setPlaceholderText(QStringLiteral("经度 lng"));
+    m_lngEdit->setInputMethodHints(Qt::ImhFormattedNumbersOnly);
     m_latEdit = new QLineEdit(searchCard);
     m_latEdit->setPlaceholderText(QStringLiteral("纬度 lat"));
+    m_latEdit->setInputMethodHints(Qt::ImhFormattedNumbersOnly);
     m_searchButton = new QPushButton(QStringLiteral("查找附近站点"), searchCard);
     m_searchButton->setProperty("class", QStringLiteral("smallPrimary"));
     coordRow->addWidget(m_lngEdit, 1);
@@ -198,6 +210,20 @@ FindStationPage::FindStationPage(SocketClient *client, QWidget *parent)
     connect(m_geocodeButton, &QPushButton::clicked, this, &FindStationPage::onGeocodeClicked);
     connect(m_searchButton, &QPushButton::clicked, this, &FindStationPage::onSearchClicked);
     connect(m_refreshButton, &QPushButton::clicked, this, &FindStationPage::onRefreshClicked);
+}
+
+void FindStationPage::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    // 「全部区域（默认）」：登录后首次进入找站页即以北京市中心默认坐标查询，
+    // 不选区域也有站点列表可看；仅在已连接时自动触发一次
+    if (m_defaultSearched || !m_client->isConnected())
+        return;
+    const QVariant data = m_regionCombo->itemData(m_regionCombo->currentIndex());
+    if (!data.isValid())
+        return;
+    m_defaultSearched = true;
+    onRegionSelected(m_regionCombo->currentIndex());
 }
 
 void FindStationPage::onRegionSelected(int index)

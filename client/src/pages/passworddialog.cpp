@@ -9,6 +9,7 @@
 #include <QVBoxLayout>
 
 #include "net/socketclient.h"
+#include "ui/passwordtoggle.h"
 #include "ui/uienums.h"
 
 PasswordDialog::PasswordDialog(SocketClient *client, bool hasPassword, bool allowSkip, QWidget *parent)
@@ -47,7 +48,7 @@ PasswordDialog::PasswordDialog(SocketClient *client, bool hasPassword, bool allo
     m_newEdit->setEchoMode(QLineEdit::Password);
     m_newEdit->setPlaceholderText(QStringLiteral("新密码（6-20 位，不含空白字符）"));
     m_newEdit->setMaxLength(20);
-    root->addWidget(m_newEdit);
+    root->addWidget(ui::withPasswordToggle(m_newEdit, this));
 
     m_confirmEdit = new QLineEdit(this);
     m_confirmEdit->setEchoMode(QLineEdit::Password);
