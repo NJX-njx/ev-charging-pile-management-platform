@@ -913,11 +913,12 @@ Response hPileRestart(const QJsonObject &p, Session &, QSqlDatabase db)
         return fail(5000, QStringLiteral("internal error"));
     if (!q.next())
         return fail(2002, QStringLiteral("pile not found"));
-    if (q.value(0).toString() != QLatin1String("fault"))
-        return fail(3002, QStringLiteral("pile is not faulty"));
+    const QString status = q.value(0).toString();
+    if (status != QLatin1String("idle") && status != QLatin1String("fault"))
+        return fail(3002, QStringLiteral("pile is in use"));
     QSqlQuery active(db);
-    active.prepare(QStringLiteral("SELECT COUNT(*) FROM orders WHERE pileId = ?"
-                                  " AND status IN ('reserved', 'charging', 'pending_payment')"));
+    active.prepare(QStringLiteral("SELECT COUNT(*) FROM orders WHERE pileId = ? AND status IN ")
+                   + QLatin1String(kUnfinishedOrders));
     active.addBindValue(pileId);
     if (!exec(active) || !active.next())
         return fail(5000, QStringLiteral("internal error"));
@@ -931,6 +932,59 @@ Response hPileRestart(const QJsonObject &p, Session &, QSqlDatabase db)
     QJsonObject data;
     data.insert(QStringLiteral("pileId"), pileId);
     data.insert(QStringLiteral("status"), QStringLiteral("idle"));
+    return ok(data);
+}
+
+Response hPileDisable(const QJsonObject &p, Session &, QSqlDatabase db)
+{
+    qint64 pileId = 0;
+    if (!Protocol::readInt(p, QStringLiteral("pileId"), 1, kMaxId, pileId))
+        return fail(2001, QStringLiteral("invalid pileId"));
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral("SELECT status FROM piles WHERE pileId = ? AND deleted = 0"));
+    q.addBindValue(pileId);
+    if (!exec(q))
+        return fail(5000, QStringLiteral("internal error"));
+    if (!q.next())
+        return fail(2002, QStringLiteral("pile not found"));
+    if (q.value(0).toString() != QLatin1String("idle"))
+        return fail(3002, QStringLiteral("pile is not idle"));
+    QSqlQuery upd(db);
+    upd.prepare(QStringLiteral("UPDATE piles SET status = 'fault' WHERE pileId = ?"));
+    upd.addBindValue(pileId);
+    if (!exec(upd))
+        return fail(5000, QStringLiteral("internal error"));
+    QJsonObject data;
+    data.insert(QStringLiteral("pileId"), pileId);
+    data.insert(QStringLiteral("status"), QStringLiteral("fault"));
+    return ok(data);
+}
+
+Response hPileActiveOrder(const QJsonObject &p, Session &, QSqlDatabase db)
+{
+    qint64 pileId = 0;
+    if (!Protocol::readInt(p, QStringLiteral("pileId"), 1, kMaxId, pileId))
+        return fail(2001, QStringLiteral("invalid pileId"));
+    QSqlQuery pile(db);
+    pile.prepare(QStringLiteral("SELECT 1 FROM piles WHERE pileId = ? AND deleted = 0"));
+    pile.addBindValue(pileId);
+    if (!exec(pile))
+        return fail(5000, QStringLiteral("internal error"));
+    if (!pile.next())
+        return fail(2002, QStringLiteral("pile not found"));
+    QSqlQuery q(db);
+    q.prepare(QString::fromLatin1(Protocol::kAdminOrderSelect)
+              + QStringLiteral(" WHERE o.pileId = ? AND o.status IN ")
+              + QLatin1String(kUnfinishedOrders)
+              + QStringLiteral(" ORDER BY o.reservedAt DESC, o.orderId DESC LIMIT 1"));
+    q.addBindValue(pileId);
+    if (!exec(q))
+        return fail(5000, QStringLiteral("internal error"));
+    QJsonObject data;
+    if (q.next())
+        data.insert(QStringLiteral("order"), Protocol::adminOrderJson(q));
+    else
+        data.insert(QStringLiteral("order"), QJsonValue(QJsonValue::Null));
     return ok(data);
 }
 
@@ -1818,6 +1872,8 @@ const QHash<QString, MessageDef> &messageTable()
         {QStringLiteral("pile_status_overview"), {2, hPileStatusOverview}},
         {QStringLiteral("pile_list"), {2, hPileList}},
         {QStringLiteral("pile_restart"), {2, hPileRestart}},
+        {QStringLiteral("pile_disable"), {2, hPileDisable}},
+        {QStringLiteral("pile_active_order"), {2, hPileActiveOrder}},
         {QStringLiteral("pile_add"), {2, hPileAdd}},
         {QStringLiteral("pile_update"), {2, hPileUpdate}},
         {QStringLiteral("pile_delete"), {2, hPileDelete}},
