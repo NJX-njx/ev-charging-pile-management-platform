@@ -12,6 +12,8 @@
 
 **v2.3（9 月 5 日第三次补充）**：`pile_restart` 允许重启 `idle` 电桩（不再仅限 `fault`）；新增 `pile_disable`（禁用即置为 `fault` 停用下线）与 `pile_active_order`（查看 `in_use` 电桩的占用订单）。
 
+**v2.4（9 月 6 日）**：`charge_stop` 停止充电时在同一事务内释放电桩并累计充电数据，`pending_payment`（待结算）订单不再占用充电桩，`charge_settle` 只负责扣款与完成订单（**行为变更**）；明确区分「占用订单」（`reserved`/`charging`，占住电桩）与「未完成订单」（另含 `pending_payment`，欠费未结）；`pile_list` 电桩对象新增 `occupancy` 字段区分预约占用与充电占用；`user_update` 扩展支持修改 `avatar` 与 `balance` 并返回完整资料（含头像），新增 `user_detail`；新增 `admin_order_cancel`（取消预约订单）与 `admin_order_stop`（停止充电订单）；`pile_restart`/`pile_disable` 放开到 `in_use` 电桩，占用订单在同一事务内被强制终结并随响应返回；`pile_update`/`pile_delete`/`station_delete`/`pile_active_order` 的订单约束由「未完成订单」收窄为「占用订单」；`user_update` 的手机号唯一性与 3.4 对齐（已删除用户的手机号不再占用）。
+
 ## 1. 通信边界
 
 | 调用方 | 服务 | 协议 | 默认地址 | 用途 |
@@ -152,7 +154,7 @@
 - `unitPrice` 是预约时保存的站点电价快照，之后站点价格变化不影响该订单。
 - `powerKw` 是关联电桩的当前功率，供客户端估算充电中的预计花费（预计花费 ≈ `powerKw × 已充时长 × unitPrice`，仅为展示用估计值，实际金额以 `charge_stop` 时服务端计算为准）。
 - 尚未发生的时间、能耗和金额字段返回 `null`。
-- 管理端订单消息（`admin_order_list`、`admin_order_detail`）在 `Order` 基础上附加 `userPhone`（下单用户手机号）字段。
+- 管理端订单消息（`admin_order_list`、`admin_order_detail`、`admin_order_cancel`、`admin_order_stop`）在 `Order` 基础上附加 `userPhone`（下单用户手机号）字段。
 
 ### 3.4 逻辑删除
 
@@ -189,12 +191,12 @@
 | `revenue_trend` | 管理员 | 近 7 日或 30 日营收趋势 |
 | `pile_status_overview` | 管理员 | 电桩状态数量 |
 | `pile_list` | 管理员 | 查询电桩列表 |
-| `pile_restart` | 管理员 | 模拟远程重启电桩（v2.3 起 idle 也可重启） |
+| `pile_restart` | 管理员 | 模拟远程重启电桩（v2.4 起含 `in_use`，占用订单被强制终结） |
 | `pile_add` | 管理员 | 在站点下新增电桩 |
 | `pile_update` | 管理员 | 修改电桩类型与功率 |
 | `pile_delete` | 管理员 | 逻辑删除电桩 |
-| `pile_disable` | 管理员 | 禁用电桩（置为 fault） |
-| `pile_active_order` | 管理员 | 查看 in_use 电桩的占用订单 |
+| `pile_disable` | 管理员 | 禁用电桩（置为 fault；v2.4 起含 `in_use`，占用订单被强制终结） |
+| `pile_active_order` | 管理员 | 查看电桩的占用订单（`reserved`/`charging`） |
 | `station_list` | 管理员 | 分页查询站点，支持站名搜索 |
 | `station_add` | 管理员 | 新增站点和模拟电桩 |
 | `station_update` | 管理员 | 修改站点信息 |
@@ -202,14 +204,17 @@
 | `user_list` | 管理员 | 查询用户 |
 | `user_set_status` | 管理员 | 冻结或解冻用户 |
 | `user_add` | 管理员 | 新增用户 |
-| `user_update` | 管理员 | 修改用户昵称或手机号 |
+| `user_update` | 管理员 | 修改用户昵称、手机号、头像或余额（v2.4 扩展） |
 | `user_reset_password` | 管理员 | 重置用户密码为初始密码 |
 | `user_delete` | 管理员 | 逻辑删除用户 |
 | `admin_order_list` | 管理员 | 分页组合筛选查询全部订单 |
 | `admin_order_detail` | 管理员 | 订单完整明细 |
+| `admin_order_cancel` | 管理员 | 取消用户的预约订单并释放电桩（v2.4） |
+| `admin_order_stop` | 管理员 | 停止用户的充电订单，计费后释放电桩（v2.4） |
 | `admin_list` | 管理员 | 查询管理员账号列表 |
 | `admin_add` | 管理员 | 新增管理员账号（无公开注册） |
 | `admin_delete` | 管理员 | 删除管理员账号 |
+| `user_detail` | 管理员 | 查询单个用户完整资料（含头像，v2.4） |
 
 ## 5. 通用消息
 
@@ -409,7 +414,7 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 
 - 订单必须属于当前用户且状态为 `charging`，否则返回 `2002` 或 `3002`。
 - 模拟电量由服务端计算，不能由客户端提交。`amount` 按 `energyKwh × unitPrice` 四舍五入到分。
-- 停止后订单进入 `pending_payment`，电桩在结算前仍保持 `in_use`。
+- 服务端必须在**一个事务**中完成：计费、订单进入 `pending_payment`、**电桩释放为 `idle` 并累计充电次数与时长**（v2.4 起）。待结算订单不再占用充电桩，电桩立即可被其他用户预约。
 
 ### 6.11 charge_settle 结算
 
@@ -425,8 +430,8 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 {"seq":12,"type":"charge_settle","code":0,"msg":"ok","data":{"order":{"orderId":10001,"stationId":1,"stationName":"星海广场站","pileId":101,"pileCode":"P-0101","status":"completed","reservedAt":"2026-09-04T10:00:00+08:00","startTime":"2026-09-04T10:02:00+08:00","endTime":"2026-09-04T10:32:00+08:00","settledAt":"2026-09-04T10:33:00+08:00","energyKwh":20.000,"unitPrice":1.20,"amount":24.00},"balance":62.50}}
 ```
 
-- 服务端必须在一个事务中校验余额、扣款、完成订单、累计电桩充电次数和时长，并把电桩释放为 `idle`。
-- 余额不足返回 `3004`，订单保持 `pending_payment`，电桩保持 `in_use`；用户充值后可再次结算。
+- 服务端必须在一个事务中校验余额、扣款、完成订单。电桩在 `charge_stop` 时已释放并累计充电数据，本消息**不再修改电桩**（v2.4 起）。
+- 余额不足返回 `3004`，订单保持 `pending_payment`；电桩不受影响，保持 `idle` 可被他人预约。用户充值后可再次结算。
 
 ### 6.12 charge_cancel 取消预约
 
@@ -596,11 +601,12 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 响应：
 
 ```json
-{"seq":6,"type":"pile_list","code":0,"msg":"ok","data":{"piles":[{"pileId":101,"code":"P-0101","stationId":1,"stationName":"星海广场站","type":"fast","powerKw":60.0,"status":"idle","chargeCount":152,"chargeMinutes":6040}]}}
+{"seq":6,"type":"pile_list","code":0,"msg":"ok","data":{"piles":[{"pileId":101,"code":"P-0101","stationId":1,"stationName":"星海广场站","type":"fast","powerKw":60.0,"status":"idle","chargeCount":152,"chargeMinutes":6040,"occupancy":null},{"pileId":102,"code":"P-0102","stationId":1,"stationName":"星海广场站","type":"slow","powerKw":7.0,"status":"in_use","chargeCount":80,"chargeMinutes":3600,"occupancy":"reserved"}]}}
 ```
 
 - `stationId` 可省略或为 `0`，表示全部站点；正整数表示按站点筛选。
 - `status` 可省略或为 `null`，表示全部状态；否则必须是电桩状态枚举。
+- `occupancy`（v2.4 新增）是该电桩占用订单的状态：`reserved`（预约占用）或 `charging`（充电占用）；无占用（`idle`/`fault` 电桩）时为 `null`。管理端据此把 `in_use` 区分展示为「预约中」与「充电中」。
 - `includeDeleted` 可省略，默认 `false`；为 `true` 时包含已删除电桩，且每个电桩对象附加 `deleted`（bool）字段，仅管理端用于查看历史数据。
 - 结果按 `stationId`、`code` 升序，不分页，默认不含已删除电桩。
 
@@ -612,14 +618,15 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 {"seq":7,"type":"pile_restart","payload":{"pileId":101}}
 ```
 
-响应：
+响应（无占用订单时 `affectedOrderId`/`affectedOrderStatus` 为 `null`）：
 
 ```json
-{"seq":7,"type":"pile_restart","code":0,"msg":"ok","data":{"pileId":101,"status":"idle"}}
+{"seq":7,"type":"pile_restart","code":0,"msg":"ok","data":{"pileId":101,"status":"idle","affectedOrderId":10001,"affectedOrderStatus":"pending_payment"}}
 ```
 
-- v2.3 起允许重启 `fault` 或 `idle` 且没有关联未完成订单的电桩；`in_use`（有未完成订单）返回 `3002`；电桩不存在（含已删除）返回 `2002`。
-- 成功后状态改为 `idle`，管理端重新请求列表和状态总览。
+- v2.4 起允许重启任意状态的电桩（`fault`/`idle`/`in_use`）。电桩不存在（含已删除）返回 `2002`。
+- 电桩 `in_use` 且存在占用订单时，必须在**同一事务**中强制终结该订单：`reserved` 订单直接取消为 `cancelled`；`charging` 订单按 `charge_stop` 规则计费后置为 `pending_payment`（累计电桩充电次数与时长），然后把电桩置为 `idle`。
+- 成功后电桩状态为 `idle`，管理端重新请求列表和状态总览。
 
 ### 7.7 station_list 站点列表（v2 改为分页 + 搜索，破坏性变更）
 
@@ -741,7 +748,7 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 {"seq":5,"type":"pile_update","code":0,"msg":"ok","data":{"pile":{"pileId":153,"code":"P-9001","stationId":1,"stationName":"星海广场站","type":"slow","powerKw":7.0,"status":"idle","chargeCount":0,"chargeMinutes":0}}}
 ```
 
-电桩不存在（含已删除）返回 `2002`；存在关联未完成订单（电桩 `in_use`）返回 `3002`；参数非法返回 `2001`。
+电桩不存在（含已删除）返回 `2002`；电桩被占用（存在 `reserved`/`charging` 订单，电桩 `in_use`）返回 `3002`；参数非法返回 `2001`。`pending_payment` 订单不占用电桩，不阻止修改。
 
 ### 7.14 pile_delete 删除电桩
 
@@ -757,7 +764,7 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 {"seq":6,"type":"pile_delete","code":0,"msg":"ok","data":{"pileId":153,"deleted":true}}
 ```
 
-仅允许删除 `idle` 且无关联未完成订单的电桩，否则返回 `3002`；电桩不存在（含已删除）返回 `2002`。逻辑删除，历史订单保留。
+仅允许删除 `idle` 且无占用订单（`reserved`/`charging`）的电桩，否则返回 `3002`；电桩不存在（含已删除）返回 `2002`。`pending_payment` 订单不占用电桩，不阻止删除。逻辑删除，历史订单保留。
 
 ### 7.15 station_update 修改站点
 
@@ -792,7 +799,7 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 ```
 
 - 服务端在一个事务中逻辑删除站点及其站内全部电桩；`removedPileCount` 为被一并删除的电桩数。
-- 站内存在关联未完成订单的电桩时拒绝删除，返回 `3002`；站点不存在（含已删除）返回 `2002`。
+- 站内存在被占用电桩（有 `reserved`/`charging` 订单）时拒绝删除，返回 `3002`；`pending_payment` 订单不占用电桩，不阻止删除。站点不存在（含已删除）返回 `2002`。
 - 历史订单数据保留可查。
 
 ### 7.17 user_add 新增用户
@@ -814,21 +821,25 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 
 ### 7.18 user_update 修改用户信息
 
-只允许修改 `phone` 与 `nickname`，至少提供其一；用户 ID、注册时间不可修改；余额不可编辑。
+只允许修改 `phone`、`nickname`、`avatar`、`balance`（v2.4 扩展），至少提供其一；用户 ID、注册时间与状态（冻结/解冻用 `user_set_status`）不可修改。
 
 请求：
 
 ```json
-{"seq":10,"type":"user_update","payload":{"userId":8,"phone":"13800009999","nickname":"改名用户"}}
+{"seq":10,"type":"user_update","payload":{"userId":8,"nickname":"改名用户","avatar":{"mime":"image/png","base64":"iVBORw0KGgo..."},"balance":200.00}}
 ```
 
-响应：
+响应返回更新后的完整资料（v2.4 起含头像）：
 
 ```json
-{"seq":10,"type":"user_update","code":0,"msg":"ok","data":{"user":{"userId":8,"phone":"13800009999","nickname":"改名用户","balance":0.00,"regTime":"2026-09-05T10:20:30+08:00","status":"normal","hasPassword":true}}}
+{"seq":10,"type":"user_update","code":0,"msg":"ok","data":{"user":{"userId":8,"phone":"13800009999","nickname":"改名用户","balance":200.00,"regTime":"2026-09-05T10:20:30+08:00","status":"normal","hasPassword":true,"avatar":{"mime":"image/png","base64":"iVBORw0KGgo..."}}}}
 ```
 
-用户不存在（含已删除）返回 `2002`；新手机号格式非法或不唯一（含已删除用户占用）返回 `2001`。
+- 用户不存在（含已删除）返回 `2002`。
+- `phone` 必须符合手机号格式；与 3.4 对齐只在未删除用户间唯一，冲突返回 `2001`（已删除用户的手机号可复用）。
+- `nickname` 去除首尾空白后长度 1 至 20。
+- `avatar` 规则同 `user_profile_update`：仅 JPEG 或 PNG，Base64 解码后不超过 512 KiB，非法返回 `2001`；显式传 `null` 表示清除头像，省略表示不修改。
+- `balance`（v2.4 新增）为直接设置后的余额：不小于 `0`、不超过 `1000000`，最多 2 位小数，非法返回 `2001`。服务端按金额通用规则以“分”保存。
 
 ### 7.19 user_reset_password 重置用户密码
 
@@ -958,13 +969,14 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 {"seq":8,"type":"pile_disable","payload":{"pileId":101}}
 ```
 
-响应：
+响应（无占用订单时 `affectedOrderId`/`affectedOrderStatus` 为 `null`）：
 
 ```json
-{"seq":8,"type":"pile_disable","code":0,"msg":"ok","data":{"pileId":101,"status":"fault"}}
+{"seq":8,"type":"pile_disable","code":0,"msg":"ok","data":{"pileId":101,"status":"fault","affectedOrderId":10001,"affectedOrderStatus":"cancelled"}}
 ```
 
-仅允许禁用 `idle` 电桩；`in_use`（有未完成订单）或已是 `fault` 返回 `3002`；电桩不存在（含已删除）返回 `2002`。
+- v2.4 起允许禁用 `idle` 与 `in_use` 电桩；已是 `fault` 返回 `3002`；电桩不存在（含已删除）返回 `2002`。
+- 电桩 `in_use` 且存在占用订单时，必须在**同一事务**中强制终结该订单（规则与 `pile_restart` 相同：`reserved`→`cancelled`，`charging`→计费后 `pending_payment`），再把电桩置为 `fault`。
 
 ### 7.27 pile_active_order 查看电桩占用订单
 
@@ -974,19 +986,75 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 {"seq":9,"type":"pile_active_order","payload":{"pileId":101}}
 ```
 
-`in_use` 电桩有占用订单时：
+`in_use` 电桩有占用订单（`reserved`/`charging`）时：
 
 ```json
 {"seq":9,"type":"pile_active_order","code":0,"msg":"ok","data":{"order":{"orderId":10001,"userPhone":"13800001234","stationId":1,"stationName":"星海广场站","pileId":101,"pileCode":"P-0101","powerKw":60.0,"status":"charging","reservedAt":"2026-09-04T10:00:00+08:00","startTime":"2026-09-04T10:02:00+08:00","endTime":null,"settledAt":null,"energyKwh":null,"unitPrice":1.20,"amount":null}}}
 ```
 
-无占用订单（电桩 `idle`/`fault`）时：
+无占用订单（电桩 `idle`/`fault`，或只有 `pending_payment` 订单——v2.4 起待结算不再占用）时：
 
 ```json
 {"seq":9,"type":"pile_active_order","code":0,"msg":"ok","data":{"order":null}}
 ```
 
 电桩不存在（含已删除）返回 `2002`。
+
+### 7.28 user_detail 查询用户完整资料（v2.4）
+
+管理端编辑用户前查询含头像的完整资料。
+
+请求：
+
+```json
+{"seq":18,"type":"user_detail","payload":{"userId":8}}
+```
+
+响应：
+
+```json
+{"seq":18,"type":"user_detail","code":0,"msg":"ok","data":{"user":{"userId":8,"phone":"13800009999","nickname":"改名用户","balance":200.00,"regTime":"2026-09-05T10:20:30+08:00","status":"normal","hasPassword":true,"avatar":{"mime":"image/png","base64":"iVBORw0KGgo..."}}}}
+```
+
+没有头像时 `avatar` 为 `null`；用户不存在（含已删除）返回 `2002`。
+
+### 7.29 admin_order_cancel 取消预约订单（v2.4）
+
+管理员取消用户的 `reserved` 订单，效果与用户对 `charge_cancel` 一致。
+
+请求：
+
+```json
+{"seq":19,"type":"admin_order_cancel","payload":{"orderId":10001}}
+```
+
+响应（返回含 `userPhone` 的完整订单）：
+
+```json
+{"seq":19,"type":"admin_order_cancel","code":0,"msg":"ok","data":{"order":{"orderId":10001,"userPhone":"13800001234","stationId":1,"stationName":"星海广场站","pileId":101,"pileCode":"P-0101","powerKw":60.0,"status":"cancelled","reservedAt":"2026-09-04T10:00:00+08:00","startTime":null,"endTime":null,"settledAt":null,"energyKwh":null,"unitPrice":1.20,"amount":null}}}
+```
+
+- 只允许取消 `reserved` 订单，其他状态返回 `3002`；订单不存在返回 `2002`。
+- 服务端必须在一个事务中取消订单并把电桩释放为 `idle`。
+
+### 7.30 admin_order_stop 停止充电订单（v2.4）
+
+管理员停止用户的 `charging` 订单，计费规则与 `charge_stop` 一致。
+
+请求：
+
+```json
+{"seq":20,"type":"admin_order_stop","payload":{"orderId":10001}}
+```
+
+响应（返回含 `userPhone` 的完整订单）：
+
+```json
+{"seq":20,"type":"admin_order_stop","code":0,"msg":"ok","data":{"order":{"orderId":10001,"userPhone":"13800001234","stationId":1,"stationName":"星海广场站","pileId":101,"pileCode":"P-0101","powerKw":60.0,"status":"pending_payment","reservedAt":"2026-09-04T10:00:00+08:00","startTime":"2026-09-04T10:02:00+08:00","endTime":"2026-09-04T10:32:00+08:00","settledAt":null,"energyKwh":20.000,"unitPrice":1.20,"amount":24.00}}}
+```
+
+- 只允许停止 `charging` 订单，其他状态返回 `3002`；订单不存在返回 `2002`。
+- 服务端必须在**一个事务**中完成：计费、订单进入 `pending_payment`、电桩释放为 `idle` 并累计充电次数与时长。订单之后由用户本人 `charge_settle` 完成结算。
 
 ## 8. Web 数据大屏 HTTP 接口
 
@@ -1068,22 +1136,26 @@ Accept: application/json
 电桩 idle
   │ charge_reserve（同一事务：创建订单 + 电桩置 in_use）
   ▼
-订单 reserved ── charge_cancel ──> 订单 cancelled + 电桩 idle
+订单 reserved ── charge_cancel / admin_order_cancel ──> 订单 cancelled + 电桩 idle
   │ charge_start
   ▼
 订单 charging
-  │ charge_stop（服务端计算电量和金额）
+  │ charge_stop / admin_order_stop（同一事务：计费 + 电桩释放为 idle 并累计充电数据）
   ▼
-订单 pending_payment
-  │ charge_settle（同一事务：扣款 + 完成订单 + 累计电桩数据 + 释放电桩）
+订单 pending_payment（电桩已空闲，可被他人预约）
+  │ charge_settle（同一事务：扣款 + 完成订单）
   ▼
-订单 completed + 电桩 idle
+订单 completed
 ```
 
-- 任一步骤只能由订单所属用户执行。
+- 用户的充电流程操作（`charge_start`/`charge_stop`/`charge_settle`/`charge_cancel`）只能由订单所属用户执行；管理员可通过 `admin_order_cancel`/`admin_order_stop` 代为取消预约或停止充电，`pending_payment` 订单仍由用户本人结算。
 - 不符合上图顺序的请求返回 `3002`，不得部分更新数据库。
 - TCP 断开不会自动改变订单或电桩状态。用户重连登录后使用 `active_order_get` 恢复界面。
-- `fault` 电桩不能预约；`in_use` 电桩必须关联一个未完成订单。
+- `fault` 电桩不能预约；`in_use` 电桩必须恰好关联一个占用订单。
+- 两组订单集合的定义：
+  - **占用订单**（占住电桩）：`reserved`、`charging`。电桩 `in_use` 与之一一对应；`pile_restart`/`pile_disable`/`pile_update`/`pile_delete`/`station_delete`/`pile_active_order` 的电桩侧约束只看占用订单。
+  - **未完成订单**（含欠费未结）：`reserved`、`charging`、`pending_payment`。`active_order_get` 返回未完成订单；用户冻结（`user_set_status`）与删除（`user_delete`）的检查看未完成订单。
+- 管理员对 `in_use` 电桩执行 `pile_restart`/`pile_disable` 时，占用订单在同一事务内被强制终结：`reserved`→`cancelled`，`charging`→按 `charge_stop` 规则计费后 `pending_payment`（电桩累计充电数据）。
 
 ## 10. 错误码
 
@@ -1098,7 +1170,7 @@ Accept: application/json
 | `2001` | 参数缺失或格式非法 | 手机号、密码、金额、枚举、分页或经纬度非法；手机号/电桩编号唯一性冲突 |
 | `2002` | 目标不存在或不属于当前账号 | 找不到站点、电桩、用户或订单（含已逻辑删除的目标） |
 | `3001` | 消息无法解析或类型未知 | JSON 错误、信封错误、未知 `type` |
-| `3002` | 状态冲突 | 订单步骤错误、重启非故障桩、冻结有活动订单的用户、删除有活动订单的用户或有占用电桩的站点 |
+| `3002` | 状态冲突 | 订单步骤错误、禁用已故障电桩、冻结/删除有未完成订单的用户、删除有占用电桩的站点、修改/删除被占用的电桩 |
 | `3003` | 电桩不可用 | 预约在用或故障电桩 |
 | `3004` | 余额不足 | 结算金额超过钱包余额，或零余额预约 |
 | `4001` | 消息过大 | 超过 2 MiB 或头像超过限制 |
@@ -1116,4 +1188,4 @@ Accept: application/json
 - 站点、电桩、用户只做逻辑删除（删除标记），历史订单保留可查；已删除记录不再出现在任何列表与统计中。
 - 时间计算、今日和本月统计统一使用 `Asia/Shanghai`。
 - 管理端与 Web 大屏共享相同统计函数，避免相同指标口径不一致。
-- 联调至少覆盖：粘包、半包、非法 JSON、未知消息、断线重登、同一用户多未完成订单并行、错误状态顺序、余额不足、冻结账号、已删除账号登录、验证码登录与密码重置、电桩/站点/用户增改删、管理端订单筛选、管理员增删、空列表和数据库异常。
+- 联调至少覆盖：粘包、半包、非法 JSON、未知消息、断线重登、同一用户多未完成订单并行、错误状态顺序、余额不足、冻结账号、已删除账号登录、验证码登录与密码重置、电桩/站点/用户增改删、管理端订单筛选、管理员增删、空列表和数据库异常；v2.4 起另需覆盖：待结算订单释放电桩后可被他人预约、管理员取消预约/停止充电、占用中电桩的重启与禁用（订单被强制终结）、管理端修改用户余额与头像。
