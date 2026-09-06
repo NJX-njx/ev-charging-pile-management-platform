@@ -45,9 +45,13 @@ release/
 *.db-wal
 *.db-shm
 
-# server 模块构建出的可执行文件
+# 各模块构建出的可执行文件（.pro 已收进 bin/，此处兜底旧路径）
 /server/server
+/admin/AdminClient
+/client/client
 
 # qmake 就地构建的中间产物目录（.pro 中 OBJECTS_DIR/MOC_DIR 等）
 .build/
 /server/bin/
+/admin/bin/
+/client/bin/
