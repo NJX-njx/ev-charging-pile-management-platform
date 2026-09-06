@@ -20,6 +20,7 @@ constexpr qint64 kMaxPriceFen = 1000000 * 100;
 constexpr int kMaxAvatarBytes = 512 * 1024;
 const QString kInitialPassword = QStringLiteral("123456");
 const char *const kUnfinishedOrders = "('reserved', 'charging', 'pending_payment')";
+const char *const kOccupyingOrders = "('reserved', 'charging')";
 
 Response fail(int code, const QString &msg)
 {
@@ -144,6 +145,26 @@ Response orderDataResponse(const QSqlQuery &q)
 {
     QJsonObject data;
     data.insert(QStringLiteral("order"), Protocol::orderJson(q));
+    return ok(data);
+}
+
+Response loadAdminOrder(QSqlDatabase db, qint64 orderId, QSqlQuery &q)
+{
+    q = QSqlQuery(db);
+    q.prepare(QString::fromLatin1(Protocol::kAdminOrderSelect)
+              + QStringLiteral(" WHERE o.orderId = ?"));
+    q.addBindValue(orderId);
+    if (!exec(q))
+        return fail(5000, QStringLiteral("internal error"));
+    if (!q.next())
+        return fail(2002, QStringLiteral("order not found"));
+    return ok(QJsonValue());
+}
+
+Response adminOrderDataResponse(const QSqlQuery &q)
+{
+    QJsonObject data;
+    data.insert(QStringLiteral("order"), Protocol::adminOrderJson(q));
     return ok(data);
 }
 
@@ -649,6 +670,66 @@ Response hStart(const QJsonObject &p, Session &s, QSqlDatabase db)
     return orderDataResponse(fresh);
 }
 
+// v2.4：charging 订单计费停止并释放电桩（累计充电次数与时长），调用方须已开启事务。
+bool stopChargingInTx(QSqlDatabase db, qint64 orderId, qint64 pileId, qint64 startTime,
+                      qint64 unitPriceFen, double powerKw)
+{
+    const qint64 now = TimeUtil::nowSecs();
+    const qint64 durationSecs = qMax<qint64>(0, now - startTime);
+    const qint64 energyWh = static_cast<qint64>(
+        std::llround(powerKw * static_cast<double>(durationSecs) * 1000.0 / 3600.0));
+    const qint64 amountFen = (energyWh * unitPriceFen + 500) / 1000;
+    const qint64 minutes = static_cast<qint64>(
+        std::llround(static_cast<double>(now - startTime) / 60.0));
+    QSqlQuery upd(db);
+    upd.prepare(QStringLiteral("UPDATE orders SET status = 'pending_payment', endTime = ?,"
+                               " energyWh = ?, amountFen = ? WHERE orderId = ?"));
+    upd.addBindValue(now);
+    upd.addBindValue(energyWh);
+    upd.addBindValue(amountFen);
+    upd.addBindValue(orderId);
+    QSqlQuery release(db);
+    release.prepare(QStringLiteral("UPDATE piles SET status = 'idle',"
+                                   " chargeCount = chargeCount + 1,"
+                                   " chargeMinutes = chargeMinutes + ? WHERE pileId = ?"));
+    release.addBindValue(minutes);
+    release.addBindValue(pileId);
+    return exec(upd) && exec(release);
+}
+
+// v2.4：强制终结电桩的占用订单（reserved→cancelled，charging→计费停止），调用方须已开启事务。
+// 无占用订单时 affectedOrderId 保持 0、affectedStatus 保持空。
+bool terminateOccupyingOrderInTx(QSqlDatabase db, qint64 pileId, qint64 &affectedOrderId,
+                                 QString &affectedStatus)
+{
+    QSqlQuery q(db);
+    q.prepare(QString::fromLatin1(Protocol::kOrderSelect)
+              + QStringLiteral(" WHERE o.pileId = ? AND o.status IN ")
+              + QLatin1String(kOccupyingOrders)
+              + QStringLiteral(" ORDER BY o.reservedAt DESC, o.orderId DESC LIMIT 1"));
+    q.addBindValue(pileId);
+    if (!exec(q))
+        return false;
+    if (!q.next())
+        return true;
+    const qint64 orderId = q.value(0).toLongLong();
+    if (q.value(3).toString() == QLatin1String("reserved")) {
+        QSqlQuery cancel(db);
+        cancel.prepare(QStringLiteral("UPDATE orders SET status = 'cancelled' WHERE orderId = ?"));
+        cancel.addBindValue(orderId);
+        if (!exec(cancel))
+            return false;
+        affectedStatus = QStringLiteral("cancelled");
+    } else {
+        if (!stopChargingInTx(db, orderId, pileId, q.value(6).toLongLong(),
+                              q.value(4).toLongLong(), q.value(14).toDouble()))
+            return false;
+        affectedStatus = QStringLiteral("pending_payment");
+    }
+    affectedOrderId = orderId;
+    return true;
+}
+
 Response hStop(const QJsonObject &p, Session &s, QSqlDatabase db)
 {
     qint64 orderId = 0;
@@ -662,28 +743,14 @@ Response hStop(const QJsonObject &p, Session &s, QSqlDatabase db)
         return fail(2002, QStringLiteral("order not found"));
     if (q.value(3).toString() != QLatin1String("charging"))
         return fail(3002, QStringLiteral("order status must be charging"));
-    const qint64 startTime = q.value(6).toLongLong();
-    const qint64 unitPriceFen = q.value(4).toLongLong();
-    const qint64 pileId = q.value(2).toLongLong();
-    QSqlQuery pq(db);
-    pq.prepare(QStringLiteral("SELECT powerKw FROM piles WHERE pileId = ?"));
-    pq.addBindValue(pileId);
-    if (!exec(pq) || !pq.next())
+    if (!db.transaction())
         return fail(5000, QStringLiteral("internal error"));
-    const double powerKw = pq.value(0).toDouble();
-    const qint64 now = TimeUtil::nowSecs();
-    const qint64 durationSecs = qMax<qint64>(0, now - startTime);
-    const qint64 energyWh = static_cast<qint64>(
-        std::llround(powerKw * static_cast<double>(durationSecs) * 1000.0 / 3600.0));
-    const qint64 amountFen = (energyWh * unitPriceFen + 500) / 1000;
-    QSqlQuery upd(db);
-    upd.prepare(QStringLiteral("UPDATE orders SET status = 'pending_payment', endTime = ?,"
-                               " energyWh = ?, amountFen = ? WHERE orderId = ?"));
-    upd.addBindValue(now);
-    upd.addBindValue(energyWh);
-    upd.addBindValue(amountFen);
-    upd.addBindValue(orderId);
-    if (!exec(upd))
+    if (!stopChargingInTx(db, orderId, q.value(2).toLongLong(), q.value(6).toLongLong(),
+                          q.value(4).toLongLong(), q.value(14).toDouble())) {
+        db.rollback();
+        return fail(5000, QStringLiteral("internal error"));
+    }
+    if (!db.commit())
         return fail(5000, QStringLiteral("internal error"));
     QSqlQuery fresh;
     const Response reloaded = loadOrder(db, orderId, fresh);
@@ -706,9 +773,6 @@ Response hSettle(const QJsonObject &p, Session &s, QSqlDatabase db)
     if (q.value(3).toString() != QLatin1String("pending_payment"))
         return fail(3002, QStringLiteral("order status must be pending_payment"));
     const qint64 amountFen = q.value(10).toLongLong();
-    const qint64 pileId = q.value(2).toLongLong();
-    const qint64 startTime = q.value(6).toLongLong();
-    const qint64 endTime = q.value(7).toLongLong();
     if (!db.transaction())
         return fail(5000, QStringLiteral("internal error"));
     QSqlQuery bal(db);
@@ -731,15 +795,7 @@ Response hSettle(const QJsonObject &p, Session &s, QSqlDatabase db)
                                 " WHERE orderId = ?"));
     done.addBindValue(TimeUtil::nowSecs());
     done.addBindValue(orderId);
-    const qint64 minutes = static_cast<qint64>(
-        std::llround(static_cast<double>(endTime - startTime) / 60.0));
-    QSqlQuery release(db);
-    release.prepare(QStringLiteral("UPDATE piles SET status = 'idle',"
-                                   " chargeCount = chargeCount + 1,"
-                                   " chargeMinutes = chargeMinutes + ? WHERE pileId = ?"));
-    release.addBindValue(minutes);
-    release.addBindValue(pileId);
-    if (!exec(deduct) || !exec(done) || !exec(release)) {
+    if (!exec(deduct) || !exec(done)) {
         db.rollback();
         return fail(5000, QStringLiteral("internal error"));
     }
@@ -892,6 +948,10 @@ Response hPileList(const QJsonObject &p, Session &, QSqlDatabase db)
     QJsonArray piles;
     while (q.next()) {
         QJsonObject pile = Protocol::pileJson(q);
+        if (q.value(10).isNull())
+            pile.insert(QStringLiteral("occupancy"), QJsonValue(QJsonValue::Null));
+        else
+            pile.insert(QStringLiteral("occupancy"), q.value(10).toString());
         if (includeDeleted)
             pile.insert(QStringLiteral("deleted"), q.value(9).toInt() != 0);
         piles.append(pile);
@@ -913,25 +973,33 @@ Response hPileRestart(const QJsonObject &p, Session &, QSqlDatabase db)
         return fail(5000, QStringLiteral("internal error"));
     if (!q.next())
         return fail(2002, QStringLiteral("pile not found"));
-    const QString status = q.value(0).toString();
-    if (status != QLatin1String("idle") && status != QLatin1String("fault"))
-        return fail(3002, QStringLiteral("pile is in use"));
-    QSqlQuery active(db);
-    active.prepare(QStringLiteral("SELECT COUNT(*) FROM orders WHERE pileId = ? AND status IN ")
-                   + QLatin1String(kUnfinishedOrders));
-    active.addBindValue(pileId);
-    if (!exec(active) || !active.next())
+    if (!db.transaction())
         return fail(5000, QStringLiteral("internal error"));
-    if (active.value(0).toLongLong() > 0)
-        return fail(3002, QStringLiteral("pile has unfinished order"));
+    qint64 affectedOrderId = 0;
+    QString affectedStatus;
+    if (!terminateOccupyingOrderInTx(db, pileId, affectedOrderId, affectedStatus)) {
+        db.rollback();
+        return fail(5000, QStringLiteral("internal error"));
+    }
     QSqlQuery upd(db);
     upd.prepare(QStringLiteral("UPDATE piles SET status = 'idle' WHERE pileId = ?"));
     upd.addBindValue(pileId);
-    if (!exec(upd))
+    if (!exec(upd)) {
+        db.rollback();
+        return fail(5000, QStringLiteral("internal error"));
+    }
+    if (!db.commit())
         return fail(5000, QStringLiteral("internal error"));
     QJsonObject data;
     data.insert(QStringLiteral("pileId"), pileId);
     data.insert(QStringLiteral("status"), QStringLiteral("idle"));
+    if (affectedOrderId > 0) {
+        data.insert(QStringLiteral("affectedOrderId"), affectedOrderId);
+        data.insert(QStringLiteral("affectedOrderStatus"), affectedStatus);
+    } else {
+        data.insert(QStringLiteral("affectedOrderId"), QJsonValue(QJsonValue::Null));
+        data.insert(QStringLiteral("affectedOrderStatus"), QJsonValue(QJsonValue::Null));
+    }
     return ok(data);
 }
 
@@ -947,16 +1015,35 @@ Response hPileDisable(const QJsonObject &p, Session &, QSqlDatabase db)
         return fail(5000, QStringLiteral("internal error"));
     if (!q.next())
         return fail(2002, QStringLiteral("pile not found"));
-    if (q.value(0).toString() != QLatin1String("idle"))
-        return fail(3002, QStringLiteral("pile is not idle"));
+    if (q.value(0).toString() == QLatin1String("fault"))
+        return fail(3002, QStringLiteral("pile already fault"));
+    if (!db.transaction())
+        return fail(5000, QStringLiteral("internal error"));
+    qint64 affectedOrderId = 0;
+    QString affectedStatus;
+    if (!terminateOccupyingOrderInTx(db, pileId, affectedOrderId, affectedStatus)) {
+        db.rollback();
+        return fail(5000, QStringLiteral("internal error"));
+    }
     QSqlQuery upd(db);
     upd.prepare(QStringLiteral("UPDATE piles SET status = 'fault' WHERE pileId = ?"));
     upd.addBindValue(pileId);
-    if (!exec(upd))
+    if (!exec(upd)) {
+        db.rollback();
+        return fail(5000, QStringLiteral("internal error"));
+    }
+    if (!db.commit())
         return fail(5000, QStringLiteral("internal error"));
     QJsonObject data;
     data.insert(QStringLiteral("pileId"), pileId);
     data.insert(QStringLiteral("status"), QStringLiteral("fault"));
+    if (affectedOrderId > 0) {
+        data.insert(QStringLiteral("affectedOrderId"), affectedOrderId);
+        data.insert(QStringLiteral("affectedOrderStatus"), affectedStatus);
+    } else {
+        data.insert(QStringLiteral("affectedOrderId"), QJsonValue(QJsonValue::Null));
+        data.insert(QStringLiteral("affectedOrderStatus"), QJsonValue(QJsonValue::Null));
+    }
     return ok(data);
 }
 
@@ -975,7 +1062,7 @@ Response hPileActiveOrder(const QJsonObject &p, Session &, QSqlDatabase db)
     QSqlQuery q(db);
     q.prepare(QString::fromLatin1(Protocol::kAdminOrderSelect)
               + QStringLiteral(" WHERE o.pileId = ? AND o.status IN ")
-              + QLatin1String(kUnfinishedOrders)
+              + QLatin1String(kOccupyingOrders)
               + QStringLiteral(" ORDER BY o.reservedAt DESC, o.orderId DESC LIMIT 1"));
     q.addBindValue(pileId);
     if (!exec(q))
@@ -1065,8 +1152,14 @@ Response hPileUpdate(const QJsonObject &p, Session &, QSqlDatabase db)
         return fail(5000, QStringLiteral("internal error"));
     if (!q.next() || q.value(1).toInt() != 0)
         return fail(2002, QStringLiteral("pile not found"));
-    if (q.value(0).toString() == QLatin1String("in_use"))
-        return fail(3002, QStringLiteral("pile has unfinished order"));
+    QSqlQuery active(db);
+    active.prepare(QStringLiteral("SELECT COUNT(*) FROM orders WHERE pileId = ? AND status IN ")
+                   + QLatin1String(kOccupyingOrders));
+    active.addBindValue(pileId);
+    if (!exec(active) || !active.next())
+        return fail(5000, QStringLiteral("internal error"));
+    if (active.value(0).toLongLong() > 0)
+        return fail(3002, QStringLiteral("pile has occupying order"));
     QSqlQuery upd(db);
     if (hasType && hasPower) {
         upd.prepare(QStringLiteral("UPDATE piles SET type = ?, powerKw = ? WHERE pileId = ?"));
@@ -1109,12 +1202,12 @@ Response hPileDelete(const QJsonObject &p, Session &, QSqlDatabase db)
         return fail(3002, QStringLiteral("pile is not idle"));
     QSqlQuery active(db);
     active.prepare(QStringLiteral("SELECT COUNT(*) FROM orders WHERE pileId = ? AND status IN ")
-                   + QLatin1String(kUnfinishedOrders));
+                   + QLatin1String(kOccupyingOrders));
     active.addBindValue(pileId);
     if (!exec(active) || !active.next())
         return fail(5000, QStringLiteral("internal error"));
     if (active.value(0).toLongLong() > 0)
-        return fail(3002, QStringLiteral("pile has unfinished order"));
+        return fail(3002, QStringLiteral("pile has occupying order"));
     QSqlQuery upd(db);
     upd.prepare(QStringLiteral("UPDATE piles SET deleted = 1 WHERE pileId = ?"));
     upd.addBindValue(pileId);
@@ -1350,7 +1443,7 @@ Response hStationDelete(const QJsonObject &p, Session &, QSqlDatabase db)
     active.prepare(QStringLiteral("SELECT COUNT(*) FROM orders o"
                                   " JOIN piles p ON p.pileId = o.pileId"
                                   " WHERE p.stationId = ? AND o.status IN ")
-                   + QLatin1String(kUnfinishedOrders));
+                   + QLatin1String(kOccupyingOrders));
     active.addBindValue(stationId);
     if (!exec(active) || !active.next())
         return fail(5000, QStringLiteral("internal error"));
@@ -1472,6 +1565,19 @@ Response userSummaryResponse(QSqlDatabase db, qint64 userId)
     return ok(data);
 }
 
+Response userProfileResponse(QSqlDatabase db, qint64 userId)
+{
+    QSqlQuery q(db);
+    q.prepare(QString::fromLatin1(Protocol::kUserSelect)
+              + QStringLiteral(" WHERE userId = ?"));
+    q.addBindValue(userId);
+    if (!exec(q) || !q.next())
+        return fail(5000, QStringLiteral("internal error"));
+    QJsonObject data;
+    data.insert(QStringLiteral("user"), Protocol::userJson(q, true));
+    return ok(data);
+}
+
 Response hUserAdd(const QJsonObject &p, Session &, QSqlDatabase db)
 {
     if (!p.value(QStringLiteral("phone")).isString())
@@ -1520,7 +1626,9 @@ Response hUserUpdate(const QJsonObject &p, Session &, QSqlDatabase db)
         return fail(2001, QStringLiteral("invalid userId"));
     const bool hasPhone = p.contains(QStringLiteral("phone"));
     const bool hasNick = p.contains(QStringLiteral("nickname"));
-    if (!hasPhone && !hasNick)
+    const bool hasAvatar = p.contains(QStringLiteral("avatar"));
+    const bool hasBalance = p.contains(QStringLiteral("balance"));
+    if (!hasPhone && !hasNick && !hasAvatar && !hasBalance)
         return fail(2001, QStringLiteral("nothing to update"));
     QString phone, nickname;
     if (hasPhone) {
@@ -1537,6 +1645,38 @@ Response hUserUpdate(const QJsonObject &p, Session &, QSqlDatabase db)
         if (nickname.isEmpty() || nickname.length() > 20)
             return fail(2001, QStringLiteral("invalid nickname"));
     }
+    // 显式 null 表示清除头像；省略表示不修改。规则与 hProfileUpdate 相同。
+    QString avatarMime, avatarB64;
+    if (hasAvatar && !p.value(QStringLiteral("avatar")).isNull()) {
+        if (!p.value(QStringLiteral("avatar")).isObject())
+            return fail(2001, QStringLiteral("invalid avatar"));
+        const QJsonObject avatar = p.value(QStringLiteral("avatar")).toObject();
+        avatarMime = avatar.value(QStringLiteral("mime")).toString();
+        if (avatarMime != QLatin1String("image/jpeg") && avatarMime != QLatin1String("image/png"))
+            return fail(2001, QStringLiteral("invalid avatar"));
+        if (!avatar.value(QStringLiteral("base64")).isString())
+            return fail(2001, QStringLiteral("invalid avatar"));
+        avatarB64 = avatar.value(QStringLiteral("base64")).toString();
+        const QByteArray raw = QByteArray::fromBase64(avatarB64.toUtf8(),
+                                                      QByteArray::AbortOnBase64DecodingErrors);
+        if (raw.isNull() && !avatarB64.isEmpty())
+            return fail(2001, QStringLiteral("invalid avatar"));
+        if (raw.size() > kMaxAvatarBytes)
+            return fail(4001, QStringLiteral("avatar too large"));
+    }
+    // balance 允许 0，不能用 readMoneyFen（要求 >0）。
+    qint64 balanceFen = 0;
+    if (hasBalance) {
+        const QJsonValue v = p.value(QStringLiteral("balance"));
+        if (!v.isDouble())
+            return fail(2001, QStringLiteral("invalid balance"));
+        const double fen = v.toDouble() * 100.0;
+        if (std::fabs(fen - std::round(fen)) > 1e-6)
+            return fail(2001, QStringLiteral("invalid balance"));
+        balanceFen = static_cast<qint64>(std::round(fen));
+        if (balanceFen < 0 || balanceFen > kMaxPriceFen)
+            return fail(2001, QStringLiteral("invalid balance"));
+    }
     QSqlQuery q(db);
     q.prepare(QStringLiteral("SELECT deleted FROM users WHERE userId = ?"));
     q.addBindValue(userId);
@@ -1546,7 +1686,8 @@ Response hUserUpdate(const QJsonObject &p, Session &, QSqlDatabase db)
         return fail(2002, QStringLiteral("user not found"));
     if (hasPhone) {
         QSqlQuery dup(db);
-        dup.prepare(QStringLiteral("SELECT COUNT(*) FROM users WHERE phone = ? AND userId != ?"));
+        dup.prepare(QStringLiteral("SELECT COUNT(*) FROM users WHERE phone = ? AND userId != ?"
+                                   " AND deleted = 0"));
         dup.addBindValue(phone);
         dup.addBindValue(userId);
         if (!exec(dup) || !dup.next())
@@ -1554,22 +1695,53 @@ Response hUserUpdate(const QJsonObject &p, Session &, QSqlDatabase db)
         if (dup.value(0).toLongLong() > 0)
             return fail(2001, QStringLiteral("phone already exists"));
     }
-    QSqlQuery upd(db);
-    if (hasPhone && hasNick) {
-        upd.prepare(QStringLiteral("UPDATE users SET phone = ?, nickname = ? WHERE userId = ?"));
-        upd.addBindValue(phone);
-        upd.addBindValue(nickname);
-    } else if (hasPhone) {
-        upd.prepare(QStringLiteral("UPDATE users SET phone = ? WHERE userId = ?"));
-        upd.addBindValue(phone);
-    } else {
-        upd.prepare(QStringLiteral("UPDATE users SET nickname = ? WHERE userId = ?"));
-        upd.addBindValue(nickname);
+    QStringList sets;
+    QVariantList binds;
+    if (hasPhone) {
+        sets.append(QStringLiteral("phone = ?"));
+        binds.append(phone);
     }
+    if (hasNick) {
+        sets.append(QStringLiteral("nickname = ?"));
+        binds.append(nickname);
+    }
+    if (hasAvatar) {
+        sets.append(QStringLiteral("avatarMime = ?"));
+        binds.append(avatarMime);
+        sets.append(QStringLiteral("avatarBase64 = ?"));
+        binds.append(avatarB64);
+    }
+    if (hasBalance) {
+        sets.append(QStringLiteral("balanceFen = ?"));
+        binds.append(balanceFen);
+    }
+    QSqlQuery upd(db);
+    upd.prepare(QStringLiteral("UPDATE users SET ") + sets.join(QStringLiteral(", "))
+                + QStringLiteral(" WHERE userId = ?"));
+    for (const QVariant &bind : binds)
+        upd.addBindValue(bind);
     upd.addBindValue(userId);
     if (!exec(upd))
         return fail(5000, QStringLiteral("internal error"));
-    return userSummaryResponse(db, userId);
+    return userProfileResponse(db, userId);
+}
+
+Response hUserDetail(const QJsonObject &p, Session &, QSqlDatabase db)
+{
+    qint64 userId = 0;
+    if (!Protocol::readInt(p, QStringLiteral("userId"), 1, kMaxId, userId))
+        return fail(2001, QStringLiteral("invalid userId"));
+    QSqlQuery q(db);
+    q.prepare(QString::fromLatin1(Protocol::kUserSelect)
+              + QStringLiteral(" WHERE userId = ? AND deleted = 0"));
+    q.addBindValue(userId);
+    if (!exec(q))
+        return fail(5000, QStringLiteral("internal error"));
+    if (!q.next())
+        return fail(2002, QStringLiteral("user not found"));
+    QJsonObject data;
+    data.insert(QStringLiteral("user"), Protocol::userJson(q, true));
+    return ok(data);
 }
 
 Response hUserResetPassword(const QJsonObject &p, Session &, QSqlDatabase db)
@@ -1754,6 +1926,66 @@ Response hAdminOrderDetail(const QJsonObject &p, Session &, QSqlDatabase db)
     return ok(data);
 }
 
+Response hAdminOrderCancel(const QJsonObject &p, Session &, QSqlDatabase db)
+{
+    qint64 orderId = 0;
+    if (!Protocol::readInt(p, QStringLiteral("orderId"), 1, kMaxId, orderId))
+        return fail(2001, QStringLiteral("invalid orderId"));
+    QSqlQuery q(db);
+    const Response loaded = loadAdminOrder(db, orderId, q);
+    if (loaded.code != 0)
+        return loaded;
+    if (q.value(3).toString() != QLatin1String("reserved"))
+        return fail(3002, QStringLiteral("order status must be reserved"));
+    const qint64 pileId = q.value(2).toLongLong();
+    if (!db.transaction())
+        return fail(5000, QStringLiteral("internal error"));
+    QSqlQuery cancel(db);
+    cancel.prepare(QStringLiteral("UPDATE orders SET status = 'cancelled' WHERE orderId = ?"));
+    cancel.addBindValue(orderId);
+    QSqlQuery release(db);
+    release.prepare(QStringLiteral("UPDATE piles SET status = 'idle' WHERE pileId = ?"));
+    release.addBindValue(pileId);
+    if (!exec(cancel) || !exec(release)) {
+        db.rollback();
+        return fail(5000, QStringLiteral("internal error"));
+    }
+    if (!db.commit())
+        return fail(5000, QStringLiteral("internal error"));
+    QSqlQuery fresh;
+    const Response reloaded = loadAdminOrder(db, orderId, fresh);
+    if (reloaded.code != 0)
+        return reloaded;
+    return adminOrderDataResponse(fresh);
+}
+
+Response hAdminOrderStop(const QJsonObject &p, Session &, QSqlDatabase db)
+{
+    qint64 orderId = 0;
+    if (!Protocol::readInt(p, QStringLiteral("orderId"), 1, kMaxId, orderId))
+        return fail(2001, QStringLiteral("invalid orderId"));
+    QSqlQuery q(db);
+    const Response loaded = loadAdminOrder(db, orderId, q);
+    if (loaded.code != 0)
+        return loaded;
+    if (q.value(3).toString() != QLatin1String("charging"))
+        return fail(3002, QStringLiteral("order status must be charging"));
+    if (!db.transaction())
+        return fail(5000, QStringLiteral("internal error"));
+    if (!stopChargingInTx(db, orderId, q.value(2).toLongLong(), q.value(6).toLongLong(),
+                          q.value(4).toLongLong(), q.value(14).toDouble())) {
+        db.rollback();
+        return fail(5000, QStringLiteral("internal error"));
+    }
+    if (!db.commit())
+        return fail(5000, QStringLiteral("internal error"));
+    QSqlQuery fresh;
+    const Response reloaded = loadAdminOrder(db, orderId, fresh);
+    if (reloaded.code != 0)
+        return reloaded;
+    return adminOrderDataResponse(fresh);
+}
+
 Response hAdminList(const QJsonObject &, Session &, QSqlDatabase db)
 {
     QSqlQuery q(db);
@@ -1887,8 +2119,11 @@ const QHash<QString, MessageDef> &messageTable()
         {QStringLiteral("user_update"), {2, hUserUpdate}},
         {QStringLiteral("user_reset_password"), {2, hUserResetPassword}},
         {QStringLiteral("user_delete"), {2, hUserDelete}},
+        {QStringLiteral("user_detail"), {2, hUserDetail}},
         {QStringLiteral("admin_order_list"), {2, hAdminOrderList}},
         {QStringLiteral("admin_order_detail"), {2, hAdminOrderDetail}},
+        {QStringLiteral("admin_order_cancel"), {2, hAdminOrderCancel}},
+        {QStringLiteral("admin_order_stop"), {2, hAdminOrderStop}},
         {QStringLiteral("admin_list"), {2, hAdminList}},
         {QStringLiteral("admin_add"), {2, hAdminAdd}},
         {QStringLiteral("admin_delete"), {2, hAdminDelete}},

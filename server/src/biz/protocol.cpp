@@ -22,7 +22,10 @@ const char *const kStationAggregateSelect =
 
 const char *const kPileSelect =
     "SELECT p.pileId, p.code, p.stationId, p.type, p.powerKw, p.status,"
-    " p.chargeCount, p.chargeMinutes, s.name, p.deleted"
+    " p.chargeCount, p.chargeMinutes, s.name, p.deleted,"
+    " (SELECT o.status FROM orders o WHERE o.pileId = p.pileId"
+    " AND o.status IN ('reserved', 'charging')"
+    " ORDER BY o.reservedAt DESC, o.orderId DESC LIMIT 1) AS occupancy"
     " FROM piles p JOIN stations s ON s.stationId = p.stationId";
 
 const char *const kOrderSelect =
