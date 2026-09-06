@@ -421,7 +421,7 @@ static void scenarioMerged(const QString &host, quint16 port)
     CHECK(waitFor([&] { return pileTable->rowCount() == 3; }));
     log(QStringLiteral("切回单站模式：所属站列复隐"));
 
-    // 按电桩状态校验操作按钮使能（v2.3：重启 idle+fault、禁用仅 idle、占用详情仅 in_use）
+    // 按电桩状态校验操作按钮使能（v2.4：重启任意状态、禁用 idle+in_use、占用详情仅 in_use）
     auto selectPile = [&](const QString &code) {
         const int row = rowOfText(pileTable, 0, code);
         CHECK(row >= 0);
@@ -432,8 +432,8 @@ static void scenarioMerged(const QString &host, quint16 port)
     selectPile(QStringLiteral("P-0101")); // idle
     CHECK(disableBtn->isEnabled() && restartBtn->isEnabled() && editPileBtn->isEnabled()
           && deletePileBtn->isEnabled() && !activeOrderBtn->isEnabled());
-    selectPile(QStringLiteral("P-0102")); // in_use
-    CHECK(activeOrderBtn->isEnabled() && !disableBtn->isEnabled() && !restartBtn->isEnabled());
+    selectPile(QStringLiteral("P-0102")); // in_use（v2.4 起占用中也可重启/禁用）
+    CHECK(activeOrderBtn->isEnabled() && disableBtn->isEnabled() && restartBtn->isEnabled());
     selectPile(QStringLiteral("P-0103")); // fault
     CHECK(restartBtn->isEnabled() && !disableBtn->isEnabled() && !activeOrderBtn->isEnabled());
     CHECK(addPileBtn->isEnabled());

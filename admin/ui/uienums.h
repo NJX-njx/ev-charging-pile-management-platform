@@ -28,6 +28,31 @@ inline QColor pileStatusColor(const QString &status)
     return QColor(0, 0, 0);
 }
 
+// v2.4：in_use 电桩按占用订单类型（pile_list 的 occupancy 字段）区分显示为「预约中/充电中」；
+// occupancy 为空（无占用或旧服务端未返回）时回退到物理状态文案「在用」
+inline QString pileDisplayText(const QString &status, const QString &occupancy)
+{
+    if (status == QStringLiteral("in_use")) {
+        if (occupancy == QStringLiteral("reserved"))
+            return QStringLiteral("预约中");
+        if (occupancy == QStringLiteral("charging"))
+            return QStringLiteral("充电中");
+    }
+    return pileStatusText(status);
+}
+
+inline QColor pileDisplayColor(const QString &status, const QString &occupancy)
+{
+    if (status == QStringLiteral("in_use")) {
+        // 预约占用：警告橙 #ED6C02（与待结算同族）；充电占用：信息蓝 #1565C0（与充电中订单一致）
+        if (occupancy == QStringLiteral("reserved"))
+            return QColor(237, 108, 2);
+        if (occupancy == QStringLiteral("charging"))
+            return QColor(21, 101, 192);
+    }
+    return pileStatusColor(status);
+}
+
 inline QString pileTypeText(const QString &type)
 {
     if (type == QStringLiteral("fast"))

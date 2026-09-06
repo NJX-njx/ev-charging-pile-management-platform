@@ -20,6 +20,7 @@
 #include "filtertable.h"
 #include "net/socketclient.h"
 #include "uienums.h"
+#include "usereditdialog.h"
 
 namespace {
 
@@ -35,6 +36,34 @@ bool isValidPassword(const QString &password)
         return false;
     static const QRegularExpression ws(QStringLiteral("\\s"));
     return !ws.match(password).hasMatch();
+}
+
+// 用用户对象填充列表一整行（loadUsers 与编辑成功后就地刷新共用；user_list/user_update 均不返回头像，列表不展示头像）
+void setUserRowItems(QTableWidget *table, int row, const QJsonObject &u)
+{
+    const bool deleted = u[QStringLiteral("deleted")].toBool();
+
+    QTableWidgetItem *idItem = new QTableWidgetItem(QString::number(u[QStringLiteral("userId")].toInt()));
+    idItem->setData(Qt::UserRole, u[QStringLiteral("userId")].toInt());
+    idItem->setData(Qt::UserRole + 1, deleted);
+    table->setItem(row, 0, idItem);
+    table->setItem(row, 1, new QTableWidgetItem(u[QStringLiteral("phone")].toString()));
+    table->setItem(row, 2, new QTableWidgetItem(u[QStringLiteral("nickname")].toString()));
+    table->setItem(row, 3, new QTableWidgetItem(QString::number(u[QStringLiteral("balance")].toDouble(), 'f', 2)));
+
+    const QDateTime regTime = QDateTime::fromString(u[QStringLiteral("regTime")].toString(), Qt::ISODate);
+    table->setItem(row, 4, new QTableWidgetItem(regTime.isValid()
+                                                    ? regTime.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))
+                                                    : u[QStringLiteral("regTime")].toString()));
+
+    const QString status = u[QStringLiteral("status")].toString();
+    // 已删除用户状态列固定显示「已删除」（色板文本-次色），原始状态保留在 UserRole
+    QTableWidgetItem *statusItem = new QTableWidgetItem(
+        deleted ? UiEnums::recordStatusText(true) : UiEnums::userStatusText(status));
+    statusItem->setForeground(deleted ? UiEnums::recordStatusColor(true)
+                                      : UiEnums::userStatusColor(status));
+    statusItem->setData(Qt::UserRole, status);
+    table->setItem(row, 5, statusItem);
 }
 
 } // namespace
@@ -168,32 +197,8 @@ void UserPage::loadUsers(const QString &phoneKeyword)
                                                              : -1;
                               const QJsonArray users = data[QStringLiteral("users")].toArray();
                               m_table->setRowCount(users.size());
-                              for (int row = 0; row < users.size(); ++row) {
-                                  const QJsonObject u = users.at(row).toObject();
-                                  const bool deleted = u[QStringLiteral("deleted")].toBool();
-
-                                  QTableWidgetItem *idItem = new QTableWidgetItem(QString::number(u[QStringLiteral("userId")].toInt()));
-                                  idItem->setData(Qt::UserRole, u[QStringLiteral("userId")].toInt());
-                                  idItem->setData(Qt::UserRole + 1, deleted);
-                                  m_table->setItem(row, 0, idItem);
-                                  m_table->setItem(row, 1, new QTableWidgetItem(u[QStringLiteral("phone")].toString()));
-                                  m_table->setItem(row, 2, new QTableWidgetItem(u[QStringLiteral("nickname")].toString()));
-                                  m_table->setItem(row, 3, new QTableWidgetItem(QString::number(u[QStringLiteral("balance")].toDouble(), 'f', 2)));
-
-                                  const QDateTime regTime = QDateTime::fromString(u[QStringLiteral("regTime")].toString(), Qt::ISODate);
-                                  m_table->setItem(row, 4, new QTableWidgetItem(regTime.isValid()
-                                                                                    ? regTime.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))
-                                                                                    : u[QStringLiteral("regTime")].toString()));
-
-                                  const QString status = u[QStringLiteral("status")].toString();
-                                  // 已删除用户状态列固定显示「已删除」（色板文本-次色），原始状态保留在 UserRole
-                                  QTableWidgetItem *statusItem = new QTableWidgetItem(
-                                      deleted ? UiEnums::recordStatusText(true) : UiEnums::userStatusText(status));
-                                  statusItem->setForeground(deleted ? UiEnums::recordStatusColor(true)
-                                                                    : UiEnums::userStatusColor(status));
-                                  statusItem->setData(Qt::UserRole, status);
-                                  m_table->setItem(row, 5, statusItem);
-                              }
+                              for (int row = 0; row < users.size(); ++row)
+                                  setUserRowItems(m_table, row, users.at(row).toObject());
                               // 重载后恢复选中：优先按 userId 找回原行（跳过筛选隐藏行），
                               // 否则选中第一可见行，保证始终存在真实选中行而非仅有当前行高亮
                               m_ft->apply();
@@ -271,59 +276,58 @@ void UserPage::onEditUser()
     if (row < 0)
         return;
     const int userId = m_table->item(row, 0)->data(Qt::UserRole).toInt();
-    const QString phone = m_table->item(row, 1)->text();
-    const QString nickname = m_table->item(row, 2)->text();
 
-    QDialog dialog(this);
-    dialog.setWindowTitle(QStringLiteral("修改用户"));
-    QFormLayout *form = new QFormLayout(&dialog);
-
-    QLineEdit *idEdit = new QLineEdit(QString::number(userId));
-    idEdit->setEnabled(false);
-    QLineEdit *phoneEdit = new QLineEdit(phone);
-    QLineEdit *nicknameEdit = new QLineEdit(nickname);
-    nicknameEdit->setMaxLength(20);
-
-    form->addRow(QStringLiteral("用户ID"), idEdit);
-    form->addRow(QStringLiteral("手机号"), phoneEdit);
-    form->addRow(QStringLiteral("昵称"), nicknameEdit);
-
-    QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("保存"));
-    buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
-    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    form->addRow(buttons);
-
-    if (dialog.exec() != QDialog::Accepted)
-        return;
-
-    const QString newPhone = phoneEdit->text().trimmed();
-    const QString newNickname = nicknameEdit->text().trimmed();
-    if (!isValidPhone(newPhone)) {
-        QMessageBox::warning(this, QStringLiteral("修改用户"), QStringLiteral("手机号格式不正确"));
-        return;
-    }
-    if (newNickname.isEmpty()) {
-        QMessageBox::warning(this, QStringLiteral("修改用户"), QStringLiteral("昵称不能为空"));
-        return;
-    }
-
-    QJsonObject payload;
-    payload[QStringLiteral("userId")] = userId;
-    payload[QStringLiteral("phone")] = newPhone;
-    payload[QStringLiteral("nickname")] = newNickname;
-
+    // v2.4：先查含头像的完整资料再编辑（user_list 不返回头像与精确余额以外的字段）
     m_editBtn->setEnabled(false);
-    m_client->sendRequest(QStringLiteral("user_update"), payload,
-                          [this](int code, const QString &msg, const QJsonObject &) {
+    m_client->sendRequest(QStringLiteral("user_detail"), QJsonObject{{QStringLiteral("userId"), userId}},
+                          [this, userId](int code, const QString &msg, const QJsonObject &data) {
                               updateActionButtons();
-                              if (code == 0) {
-                                  QMessageBox::information(this, QStringLiteral("修改用户"), QStringLiteral("保存成功"));
-                                  refresh();
-                              } else {
-                                  QMessageBox::warning(this, QStringLiteral("修改用户失败"), msg);
+                              if (code != 0) {
+                                  QMessageBox::warning(this, QStringLiteral("修改用户"), msg);
+                                  return;
                               }
+                              const QJsonObject user = data[QStringLiteral("user")].toObject();
+
+                              UserEditDialog dialog(user, this);
+                              if (dialog.exec() != QDialog::Accepted)
+                                  return;
+
+                              if (!isValidPhone(dialog.phone())) {
+                                  QMessageBox::warning(this, QStringLiteral("修改用户"), QStringLiteral("手机号格式不正确"));
+                                  return;
+                              }
+                              if (dialog.nickname().isEmpty()) {
+                                  QMessageBox::warning(this, QStringLiteral("修改用户"), QStringLiteral("昵称不能为空"));
+                                  return;
+                              }
+
+                              // 未改的字段省略（协议 7.18 要求至少提供其一；头像被清除时 updatePayload 显式传 null）
+                              QJsonObject payload = dialog.updatePayload();
+                              if (payload.isEmpty()) {
+                                  QMessageBox::information(this, QStringLiteral("修改用户"), QStringLiteral("未做任何修改"));
+                                  return;
+                              }
+                              payload[QStringLiteral("userId")] = userId;
+
+                              m_editBtn->setEnabled(false);
+                              m_client->sendRequest(QStringLiteral("user_update"), payload,
+                                                    [this, userId](int code, const QString &msg, const QJsonObject &data) {
+                                                        updateActionButtons();
+                                                        if (code == 0) {
+                                                            // 用响应里的完整资料就地刷新列表行（列表不展示头像，无需整表重拉）
+                                                            const QJsonObject updated = data[QStringLiteral("user")].toObject();
+                                                            for (int r = 0; r < m_table->rowCount(); ++r) {
+                                                                QTableWidgetItem *it = m_table->item(r, 0);
+                                                                if (it && it->data(Qt::UserRole).toInt() == userId) {
+                                                                    setUserRowItems(m_table, r, updated);
+                                                                    break;
+                                                                }
+                                                            }
+                                                            QMessageBox::information(this, QStringLiteral("修改用户"), QStringLiteral("保存成功"));
+                                                        } else {
+                                                            QMessageBox::warning(this, QStringLiteral("修改用户失败"), msg);
+                                                        }
+                                                    });
                           });
 }
 

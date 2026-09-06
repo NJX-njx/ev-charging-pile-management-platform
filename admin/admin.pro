@@ -18,6 +18,7 @@ SOURCES += \
     ui/salespage.cpp \
     ui/stationpilepage.cpp \
     ui/systempage.cpp \
+    ui/usereditdialog.cpp \
     ui/userpage.cpp
 
 HEADERS += \
@@ -30,6 +31,7 @@ HEADERS += \
     ui/stationpilepage.h \
     ui/systempage.h \
     ui/uienums.h \
+    ui/usereditdialog.h \
     ui/userpage.h
 
 FORMS += \
