@@ -1,7 +1,7 @@
-# admin 模块 p7 改版验证 harness（offscreen）：链接真实 admin 源码 +
-# tools/mock_server_v23.py 状态化假服务端，脚本化驱动 UI 断言：
-# 导航 5 项可见/窗口尺寸/列宽、站点与电桩合并页状态条与全部站点模式、
-# 左右联动与全部操作、全列表 Excel 式筛选排序、系统页管理员操作。
+# admin 模块 v2.4 协议验证 harness（offscreen）：链接真实 admin 源码，
+# 直连 v2.4 真实服务端（默认 127.0.0.1:8888），每场景自建站点/用户/订单数据后
+# 驱动 UI 断言并截图：电桩占用区分显示与占用桩重启/禁用、用户资料编辑（头像/余额）、
+# 订单干预（取消预约/停止充电）。
 # 不属于交付模块，仅用于开发验证；用法见 run_scenarios.sh。
 
 QT += core gui widgets network testlib
@@ -11,7 +11,7 @@ qtHaveModule(charts): QT += charts
 CONFIG += c++17 console
 CONFIG -= app_bundle
 
-TARGET = p7_harness
+TARGET = v24_harness
 TEMPLATE = app
 
 INCLUDEPATH += $$PWD/../..

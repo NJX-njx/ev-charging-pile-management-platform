@@ -105,6 +105,19 @@ OrderPage::OrderPage(SocketClient *client, QWidget *parent)
     filters->addWidget(refreshBtn);
     root->addLayout(filters);
 
+    // 管理端干预订单（v2.4）：作用于选中行，按订单状态使能（reserved 可取消预约、charging 可停止充电）
+    QHBoxLayout *actions = new QHBoxLayout;
+    actions->addStretch();
+    m_cancelBtn = new QPushButton(QStringLiteral("取消预约"));
+    m_cancelBtn->setObjectName(QStringLiteral("btnCancelOrder"));
+    m_cancelBtn->setEnabled(false);
+    actions->addWidget(m_cancelBtn);
+    m_stopBtn = new QPushButton(QStringLiteral("停止充电"));
+    m_stopBtn->setObjectName(QStringLiteral("btnStopCharge"));
+    m_stopBtn->setEnabled(false);
+    actions->addWidget(m_stopBtn);
+    root->addLayout(actions);
+
     m_table = new QTableWidget;
     m_table->setObjectName(QStringLiteral("orderTable"));
     m_table->setColumnCount(9);
@@ -183,6 +196,15 @@ OrderPage::OrderPage(SocketClient *client, QWidget *parent)
     });
     connect(m_table, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
         showDetail(m_table->item(row, 0)->data(Qt::UserRole).toInt());
+    });
+    connect(m_cancelBtn, &QPushButton::clicked, this, &OrderPage::onCancelOrder);
+    connect(m_stopBtn, &QPushButton::clicked, this, &OrderPage::onStopCharge);
+    connect(m_table, &QTableWidget::itemSelectionChanged, this, &OrderPage::updateActionButtons);
+    // 兜底：点击当前行不产生选中变化信号时，也要保证该行被选中且按钮状态同步
+    connect(m_table, &QTableWidget::clicked, this, [this](const QModelIndex &index) {
+        if (index.isValid())
+            m_table->selectRow(index.row());
+        updateActionButtons();
     });
 }
 
@@ -270,6 +292,8 @@ void OrderPage::loadOrders()
                                   const QString status = o[QStringLiteral("status")].toString();
                                   QTableWidgetItem *statusItem = new QTableWidgetItem(UiEnums::orderStatusText(status));
                                   statusItem->setForeground(UiEnums::orderStatusColor(status));
+                                  // 原始状态保留在 UserRole，供「取消预约」「停止充电」按状态使能
+                                  statusItem->setData(Qt::UserRole, status);
                                   m_table->setItem(row, 4, statusItem);
 
                                   // 电量/金额数字列右对齐
@@ -294,6 +318,74 @@ void OrderPage::loadOrders()
                               if (targetRow >= 0)
                                   m_table->selectRow(targetRow);
                               updatePagination();
+                              updateActionButtons();
+                          });
+}
+
+int OrderPage::selectedOrderId() const
+{
+    const auto items = m_table->selectedItems();
+    if (items.isEmpty())
+        return -1;
+    QTableWidgetItem *it = m_table->item(items.first()->row(), 0);
+    return it ? it->data(Qt::UserRole).toInt() : -1;
+}
+
+void OrderPage::updateActionButtons()
+{
+    QString status;
+    const auto items = m_table->selectedItems();
+    if (!items.isEmpty()) {
+        QTableWidgetItem *statusItem = m_table->item(items.first()->row(), 4);
+        status = statusItem ? statusItem->data(Qt::UserRole).toString() : QString();
+    }
+    m_cancelBtn->setEnabled(status == QStringLiteral("reserved"));
+    m_stopBtn->setEnabled(status == QStringLiteral("charging"));
+}
+
+void OrderPage::onCancelOrder()
+{
+    const int orderId = selectedOrderId();
+    if (orderId < 0)
+        return;
+
+    const auto ret = QMessageBox::question(this, QStringLiteral("取消预约"),
+                                           QStringLiteral("确定要取消订单 #%1 的预约吗？电桩将释放为空闲。").arg(orderId));
+    if (ret != QMessageBox::Yes)
+        return;
+
+    m_cancelBtn->setEnabled(false);
+    m_client->sendRequest(QStringLiteral("admin_order_cancel"), QJsonObject{{QStringLiteral("orderId"), orderId}},
+                          [this](int code, const QString &msg, const QJsonObject &) {
+                              if (code == 0)
+                                  QMessageBox::information(this, QStringLiteral("取消预约"),
+                                                           QStringLiteral("订单已取消，电桩已释放为空闲"));
+                              else
+                                  QMessageBox::warning(this, QStringLiteral("取消预约失败"), msg);
+                              loadOrders();
+                          });
+}
+
+void OrderPage::onStopCharge()
+{
+    const int orderId = selectedOrderId();
+    if (orderId < 0)
+        return;
+
+    const auto ret = QMessageBox::question(this, QStringLiteral("停止充电"),
+                                           QStringLiteral("确定要停止订单 #%1 的充电吗？将按已充时长计费，订单进入待结算，电桩释放为空闲。").arg(orderId));
+    if (ret != QMessageBox::Yes)
+        return;
+
+    m_stopBtn->setEnabled(false);
+    m_client->sendRequest(QStringLiteral("admin_order_stop"), QJsonObject{{QStringLiteral("orderId"), orderId}},
+                          [this](int code, const QString &msg, const QJsonObject &) {
+                              if (code == 0)
+                                  QMessageBox::information(this, QStringLiteral("停止充电"),
+                                                           QStringLiteral("已停止充电，订单转入待结算，电桩已释放"));
+                              else
+                                  QMessageBox::warning(this, QStringLiteral("停止充电失败"), msg);
+                              loadOrders();
                           });
 }
 

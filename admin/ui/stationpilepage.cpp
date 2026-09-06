@@ -65,6 +65,21 @@ QLabel *createStatusBadge(const QString &status)
     return badge;
 }
 
+// v2.4：pile_restart/pile_disable 响应中的强制终结订单信息（无占用订单时两字段为 null）
+QString affectedOrderNote(const QJsonObject &data)
+{
+    const QJsonValue orderId = data[QStringLiteral("affectedOrderId")];
+    if (!orderId.isDouble())
+        return QString();
+    const QString orderStatus = data[QStringLiteral("affectedOrderStatus")].toString();
+    const QString result = orderStatus == QStringLiteral("cancelled")
+                               ? QStringLiteral("已取消")
+                               : orderStatus == QStringLiteral("pending_payment")
+                                     ? QStringLiteral("已转入待结算")
+                                     : UiEnums::orderStatusText(orderStatus);
+    return QStringLiteral("；关联订单 #%1 %2").arg(orderId.toInt()).arg(result);
+}
+
 } // namespace
 
 StationPilePage::StationPilePage(SocketClient *client, QWidget *parent)
@@ -543,12 +558,16 @@ void StationPilePage::loadPiles(bool force)
                                   m_pileTable->setItem(row, kPileColPower, powerItem);
 
                                   const QString status = p[QStringLiteral("status")].toString();
+                                  // v2.4：占用订单状态（reserved/charging），无占用为 null；
                                   // 已删除电桩状态列固定显示「已删除」（色板文本-次色），原始状态保留在 UserRole
+                                  const QString occupancy = p[QStringLiteral("occupancy")].toString();
                                   QTableWidgetItem *statusItem = new QTableWidgetItem(
-                                      deleted ? UiEnums::recordStatusText(true) : UiEnums::pileStatusText(status));
+                                      deleted ? UiEnums::recordStatusText(true)
+                                              : UiEnums::pileDisplayText(status, occupancy));
                                   statusItem->setForeground(deleted ? UiEnums::recordStatusColor(true)
-                                                                    : UiEnums::pileStatusColor(status));
+                                                                    : UiEnums::pileDisplayColor(status, occupancy));
                                   statusItem->setData(Qt::UserRole, status);
+                                  statusItem->setData(Qt::UserRole + 1, occupancy);
                                   m_pileTable->setItem(row, kPileColStatus, statusItem);
 
                                   m_pileTable->setItem(row, kPileColCount, new QTableWidgetItem(QString::number(p[QStringLiteral("chargeCount")].toInt())));
@@ -585,10 +604,12 @@ void StationPilePage::updatePileActionButtons()
         deleted = codeItem && codeItem->data(Qt::UserRole + 1).toBool();
     }
     // 已删除记录仅用于历史查看，不作为修改/删除/重启/禁用/占用详情的操作对象
-    // v2.3：远程重启支持 idle 与 fault；禁用仅支持 idle；占用详情仅 in_use
+    // v2.4：远程重启支持任意状态（in_use 时强制终结占用订单）；禁用支持 idle 与 in_use；占用详情仅 in_use
     m_restartBtn->setEnabled(hasSelection && !deleted
-                             && (status == QStringLiteral("idle") || status == QStringLiteral("fault")));
-    m_disableBtn->setEnabled(hasSelection && !deleted && status == QStringLiteral("idle"));
+                             && (status == QStringLiteral("idle") || status == QStringLiteral("in_use")
+                                 || status == QStringLiteral("fault")));
+    m_disableBtn->setEnabled(hasSelection && !deleted
+                             && (status == QStringLiteral("idle") || status == QStringLiteral("in_use")));
     m_activeOrderBtn->setEnabled(hasSelection && !deleted && status == QStringLiteral("in_use"));
     m_editPileBtn->setEnabled(hasSelection && !deleted);
     m_deletePileBtn->setEnabled(hasSelection && !deleted);
@@ -1160,17 +1181,28 @@ void StationPilePage::onRestartClicked()
         return;
     const int pileId = m_pileTable->item(row, kPileColCode)->data(Qt::UserRole).toInt();
     const QString code = m_pileTable->item(row, kPileColCode)->text();
+    const QString status = m_pileTable->item(row, kPileColStatus)->data(Qt::UserRole).toString();
+    const QString occupancy = m_pileTable->item(row, kPileColStatus)->data(Qt::UserRole + 1).toString();
 
-    const auto ret = QMessageBox::question(this, QStringLiteral("远程重启"),
-                                           QStringLiteral("确定要重启电桩 %1 吗？").arg(code));
+    // v2.4：占用中的电桩也可重启，确认文案需说明占用订单将被强制终结（充电中会计费转入待结算）
+    QString question = QStringLiteral("确定要重启电桩 %1 吗？").arg(code);
+    if (status == QStringLiteral("in_use")) {
+        question = QStringLiteral("确定要重启电桩 %1 吗？该桩存在占用订单（%2），重启将强制终结该订单%3。")
+                       .arg(code, UiEnums::pileDisplayText(status, occupancy),
+                            occupancy == QStringLiteral("charging")
+                                ? QStringLiteral("，并按已充时长计费转入待结算")
+                                : QString());
+    }
+    const auto ret = QMessageBox::question(this, QStringLiteral("远程重启"), question);
     if (ret != QMessageBox::Yes)
         return;
 
     m_restartBtn->setEnabled(false);
     m_client->sendRequest(QStringLiteral("pile_restart"), QJsonObject{{QStringLiteral("pileId"), pileId}},
-                          [this](int code, const QString &msg, const QJsonObject &) {
+                          [this](int code, const QString &msg, const QJsonObject &data) {
                               if (code == 0) {
-                                  QMessageBox::information(this, QStringLiteral("远程重启"), QStringLiteral("重启成功，电桩已恢复空闲"));
+                                  QMessageBox::information(this, QStringLiteral("远程重启"),
+                                                           QStringLiteral("重启成功，电桩已恢复空闲%1").arg(affectedOrderNote(data)));
                                   refresh();
                               } else {
                                   QMessageBox::warning(this, QStringLiteral("远程重启失败"), msg);
@@ -1187,21 +1219,27 @@ void StationPilePage::onDisableClicked()
     const int pileId = m_pileTable->item(row, kPileColCode)->data(Qt::UserRole).toInt();
     const QString code = m_pileTable->item(row, kPileColCode)->text();
     const QString status = m_pileTable->item(row, kPileColStatus)->data(Qt::UserRole).toString();
-    if (status != QStringLiteral("idle")) {
-        QMessageBox::warning(this, QStringLiteral("禁用电桩"), QStringLiteral("仅空闲状态的电桩可禁用"));
-        return;
-    }
+    const QString occupancy = m_pileTable->item(row, kPileColStatus)->data(Qt::UserRole + 1).toString();
 
-    const auto ret = QMessageBox::question(this, QStringLiteral("禁用电桩"),
-                                           QStringLiteral("确定要禁用（停用下线）电桩 %1 吗？禁用后状态变为故障，恢复需远程重启。").arg(code));
+    // v2.4：in_use 电桩可禁用，占用订单在同一事务内被强制终结（充电中会计费转入待结算）
+    QString question = QStringLiteral("确定要禁用（停用下线）电桩 %1 吗？禁用后状态变为故障，恢复需远程重启。").arg(code);
+    if (status == QStringLiteral("in_use")) {
+        question = QStringLiteral("确定要禁用（停用下线）电桩 %1 吗？该桩存在占用订单（%2），禁用将强制终结该订单%3；禁用后状态变为故障，恢复需远程重启。")
+                       .arg(code, UiEnums::pileDisplayText(status, occupancy),
+                            occupancy == QStringLiteral("charging")
+                                ? QStringLiteral("，并按已充时长计费转入待结算")
+                                : QString());
+    }
+    const auto ret = QMessageBox::question(this, QStringLiteral("禁用电桩"), question);
     if (ret != QMessageBox::Yes)
         return;
 
     m_disableBtn->setEnabled(false);
     m_client->sendRequest(QStringLiteral("pile_disable"), QJsonObject{{QStringLiteral("pileId"), pileId}},
-                          [this](int code, const QString &msg, const QJsonObject &) {
+                          [this](int code, const QString &msg, const QJsonObject &data) {
                               if (code == 0) {
-                                  QMessageBox::information(this, QStringLiteral("禁用电桩"), QStringLiteral("禁用成功，电桩已停用下线"));
+                                  QMessageBox::information(this, QStringLiteral("禁用电桩"),
+                                                           QStringLiteral("禁用成功，电桩已停用下线%1").arg(affectedOrderNote(data)));
                                   refresh();
                               } else {
                                   QMessageBox::warning(this, QStringLiteral("禁用电桩失败"), msg);
