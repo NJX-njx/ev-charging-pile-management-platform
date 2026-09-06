@@ -13,6 +13,8 @@
 #ifdef EVCP_HAVE_WEBENGINE
 #include <QWebEnginePage>
 #include <QWebEngineProfile>
+#include <QWebEngineScript>
+#include <QWebEngineScriptCollection>
 #include <QWebEngineView>
 #endif
 
@@ -163,6 +165,44 @@ void NavigationDialog::loadRoute()
         profile->setHttpUserAgent(QStringLiteral(
             "Mozilla/5.0 (Linux; Android 13; Pixel 6) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"));
+        // 移动版 H5 的按钮直接绑定 touchend/touchstart（如地图缩放、下载入口），
+        // 桌面 WebEngine 只派发鼠标事件，这些处理器永远不会触发。在导航专用
+        // profile 注入 DocumentCreation/MainWorld 脚本，把鼠标按下/移动/抬起
+        // 翻译成对应触摸事件；脚本仅在无真实触摸能力的环境启用
+        QWebEngineScript touchShim;
+        touchShim.setName(QStringLiteral("evcpTouchShim"));
+        touchShim.setInjectionPoint(QWebEngineScript::DocumentCreation);
+        touchShim.setWorldId(QWebEngineScript::MainWorld);
+        touchShim.setRunsOnSubFrames(true);
+        touchShim.setSourceCode(QStringLiteral(R"JS(
+(function () {
+    if ('ontouchstart' in window || navigator.maxTouchPoints > 0) return;
+    window.__evcpTouchShim = true;
+    var pressTarget = null;
+    function fire(type, e) {
+        var target = pressTarget || e.target;
+        if (!target || !window.Touch) return;
+        var touch;
+        try {
+            touch = new Touch({identifier: 0, target: target,
+                clientX: e.clientX, clientY: e.clientY,
+                pageX: e.pageX, pageY: e.pageY,
+                screenX: e.screenX, screenY: e.screenY});
+        } catch (err) { return; }
+        var active = (type === 'touchend') ? [] : [touch];
+        var ev;
+        try {
+            ev = new TouchEvent(type, {cancelable: true, bubbles: true,
+                touches: active, targetTouches: active, changedTouches: [touch]});
+        } catch (err) { return; }
+        target.dispatchEvent(ev);
+    }
+    document.addEventListener('mousedown', function (e) { pressTarget = e.target; fire('touchstart', e); }, true);
+    document.addEventListener('mousemove', function (e) { if (pressTarget) fire('touchmove', e); }, true);
+    document.addEventListener('mouseup', function (e) { if (pressTarget) { fire('touchend', e); pressTarget = null; } }, true);
+})();
+)JS"));
+        profile->scripts()->insert(touchShim);
         m_view->setPage(new QWebEnginePage(profile, m_view));
         m_stack->addWidget(m_view);
     }
