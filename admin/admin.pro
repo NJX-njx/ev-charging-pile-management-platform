@@ -36,6 +36,7 @@ HEADERS += \
     ui/mainwindow.h \
     ui/orderpage.h \
     ui/salespage.h \
+    ui/stationimport.h \
     ui/stationpilepage.h \
     ui/systempage.h \
     ui/uienums.h \

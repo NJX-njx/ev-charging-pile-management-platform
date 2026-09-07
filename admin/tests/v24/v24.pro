@@ -38,6 +38,7 @@ HEADERS += \
     $$SRC/ui/mainwindow.h \
     $$SRC/ui/orderpage.h \
     $$SRC/ui/salespage.h \
+    $$SRC/ui/stationimport.h \
     $$SRC/ui/stationpilepage.h \
     $$SRC/ui/systempage.h \
     $$SRC/ui/uienums.h \

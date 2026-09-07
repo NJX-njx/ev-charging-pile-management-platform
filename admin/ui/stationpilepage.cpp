@@ -21,19 +21,18 @@
 #include <QPointer>
 #include <QProgressDialog>
 #include <QPushButton>
-#include <QSpinBox>
 #include <QSplitter>
 #include <QStandardPaths>
 #include <QTableWidget>
 #include <QVBoxLayout>
 
-#include <cmath>
+#include <algorithm>
 #include <functional>
-#include <limits>
 #include <memory>
 
 #include "filtertable.h"
 #include "net/socketclient.h"
+#include "stationimport.h"
 #include "uienums.h"
 
 namespace {
@@ -755,6 +754,7 @@ void StationPilePage::onAddStation()
 {
     QDialog dialog(this);
     dialog.setWindowTitle(QStringLiteral("新增站点"));
+    dialog.setMinimumWidth(560);
     QFormLayout *form = new QFormLayout(&dialog);
 
     QLineEdit *nameEdit = new QLineEdit;
@@ -768,16 +768,80 @@ void StationPilePage::onAddStation()
     priceBox->setDecimals(2);
     priceBox->setSingleStep(0.10);
     priceBox->setValue(1.20);
-    QSpinBox *countBox = new QSpinBox;
-    countBox->setRange(1, 100);
-    countBox->setValue(5);
 
     form->addRow(QStringLiteral("站名"), nameEdit);
     form->addRow(QStringLiteral("地址"), addressEdit);
     form->addRow(QStringLiteral("经度"), lngEdit);
     form->addRow(QStringLiteral("纬度"), latEdit);
     form->addRow(QStringLiteral("单价(元/度)"), priceBox);
-    form->addRow(QStringLiteral("电桩数量"), countBox);
+
+    // v2.5：电桩清单显式录入（协议 7.8 piles），服务端不再按数量生成电桩
+    QTableWidget *pileTable = new QTableWidget;
+    pileTable->setObjectName(QStringLiteral("addStationPileTable"));
+    pileTable->setColumnCount(3);
+    pileTable->setHorizontalHeaderLabels(
+        {QStringLiteral("编号"), QStringLiteral("类型"), QStringLiteral("功率(kW)")});
+    pileTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+    pileTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    pileTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    pileTable->verticalHeader()->setVisible(false);
+    pileTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    pileTable->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    pileTable->setMinimumHeight(180);
+    pileTable->setMaximumHeight(240);
+
+    const auto addPileRow = [pileTable]() {
+        const int row = pileTable->rowCount();
+        pileTable->insertRow(row);
+        // 编号默认值仅作占位建议（P-0001 递增），管理员按实际电桩编号修改
+        QLineEdit *codeEdit =
+            new QLineEdit(QStringLiteral("P-%1").arg(row + 1, 4, 10, QLatin1Char('0')));
+        codeEdit->setMaxLength(20);
+        pileTable->setCellWidget(row, 0, codeEdit);
+        QComboBox *typeBox = new QComboBox;
+        typeBox->addItem(QStringLiteral("快充"), QStringLiteral("fast"));
+        typeBox->addItem(QStringLiteral("慢充"), QStringLiteral("slow"));
+        pileTable->setCellWidget(row, 1, typeBox);
+        QDoubleSpinBox *powerBox = new QDoubleSpinBox;
+        powerBox->setRange(0.01, 1000.0);
+        powerBox->setDecimals(1);
+        powerBox->setValue(60.0);
+        pileTable->setCellWidget(row, 2, powerBox);
+        // 功率默认值随类型联动（快充 60 / 慢充 7），仍可手改
+        QObject::connect(typeBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                         [typeBox, powerBox]() {
+                             powerBox->setValue(typeBox->currentData().toString()
+                                                        == QStringLiteral("fast")
+                                                    ? 60.0
+                                                    : 7.0);
+                         });
+    };
+    addPileRow();
+    addPileRow();
+
+    QPushButton *addRowBtn = new QPushButton(QStringLiteral("添加电桩"));
+    QPushButton *delRowBtn = new QPushButton(QStringLiteral("删除选中"));
+    QObject::connect(addRowBtn, &QPushButton::clicked, addPileRow);
+    QObject::connect(delRowBtn, &QPushButton::clicked, [pileTable]() {
+        QList<int> rows;
+        const auto selected = pileTable->selectionModel()->selectedRows();
+        for (const QModelIndex &idx : selected)
+            rows << idx.row();
+        std::sort(rows.begin(), rows.end(), std::greater<int>());
+        for (const int row : rows)
+            pileTable->removeRow(row);
+    });
+
+    QWidget *pilePanel = new QWidget;
+    QVBoxLayout *pileLayout = new QVBoxLayout(pilePanel);
+    pileLayout->setContentsMargins(0, 0, 0, 0);
+    QHBoxLayout *pileButtons = new QHBoxLayout;
+    pileButtons->addWidget(addRowBtn);
+    pileButtons->addWidget(delRowBtn);
+    pileButtons->addStretch();
+    pileLayout->addLayout(pileButtons);
+    pileLayout->addWidget(pileTable);
+    form->addRow(QStringLiteral("电桩清单"), pilePanel);
 
     QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("创建"));
@@ -794,6 +858,27 @@ void StationPilePage::onAddStation()
         QMessageBox::warning(this, QStringLiteral("新增站点"), QStringLiteral("站名、地址、经度、纬度不能为空"));
         return;
     }
+    if (pileTable->rowCount() == 0) {
+        QMessageBox::warning(this, QStringLiteral("新增站点"), QStringLiteral("请至少添加 1 个电桩"));
+        return;
+    }
+    QJsonArray pilesInput;
+    for (int row = 0; row < pileTable->rowCount(); ++row) {
+        QLineEdit *codeEdit = qobject_cast<QLineEdit *>(pileTable->cellWidget(row, 0));
+        QComboBox *typeBox = qobject_cast<QComboBox *>(pileTable->cellWidget(row, 1));
+        QDoubleSpinBox *powerBox = qobject_cast<QDoubleSpinBox *>(pileTable->cellWidget(row, 2));
+        if (!codeEdit || !typeBox || !powerBox)
+            continue;
+        pilesInput.append(QJsonObject{{QStringLiteral("code"), codeEdit->text()},
+                                      {QStringLiteral("type"), typeBox->currentData().toString()},
+                                      {QStringLiteral("powerKw"), powerBox->value()}});
+    }
+    QJsonArray piles;
+    QString pileError;
+    if (!StationImport::validatePiles(pilesInput, &piles, &pileError)) {
+        QMessageBox::warning(this, QStringLiteral("新增站点"), pileError);
+        return;
+    }
 
     QJsonObject payload;
     payload[QStringLiteral("name")] = nameEdit->text().trimmed();
@@ -801,7 +886,7 @@ void StationPilePage::onAddStation()
     payload[QStringLiteral("lng")] = lngEdit->text().toDouble();
     payload[QStringLiteral("lat")] = latEdit->text().toDouble();
     payload[QStringLiteral("pricePerKwh")] = priceBox->value();
-    payload[QStringLiteral("pileCount")] = countBox->value();
+    payload[QStringLiteral("piles")] = piles;
 
     m_addStationBtn->setEnabled(false);
     m_client->sendRequest(QStringLiteral("station_add"), payload,
@@ -812,7 +897,7 @@ void StationPilePage::onAddStation()
                                                             [QStringLiteral("stationId")].toInt();
                                   const int created = data[QStringLiteral("createdPileCount")].toInt();
                                   QMessageBox::information(this, QStringLiteral("新增站点"),
-                                                           QStringLiteral("创建成功，站点ID：%1，已生成 %2 个电桩").arg(stationId).arg(created));
+                                                           QStringLiteral("创建成功，站点ID：%1，已创建 %2 个电桩").arg(stationId).arg(created));
                                   refresh();
                               } else {
                                   QMessageBox::warning(this, QStringLiteral("新增站点失败"), msg);
@@ -847,7 +932,7 @@ void StationPilePage::importStationsFromFile(const QString &path)
     const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
     if (parseError.error != QJsonParseError::NoError || !doc.isArray()) {
         QMessageBox::warning(this, QStringLiteral("导入站点"),
-                             QStringLiteral("文件格式非法：应为 JSON 数组，元素含 name/address/lng/lat/pricePerKwh/pileCount 字段"));
+                             QStringLiteral("文件格式非法：应为 JSON 数组，元素含 name/address/lng/lat/pricePerKwh/piles 字段（piles 为 1 至 100 条 {code,type,powerKw} 电桩数组）"));
         return;
     }
     const QJsonArray items = doc.array();
@@ -856,7 +941,7 @@ void StationPilePage::importStationsFromFile(const QString &path)
         return;
     }
 
-    // 逐条预校验（与服务端 station_add 参数规则一致，协议 7.8），通过后进入发送队列
+    // 逐条预校验（v2.5 协议 7.8：显式 piles 电桩清单），通过后进入发送队列
     QList<QPair<QString, QJsonObject>> queue;
     QStringList failures;
     for (int i = 0; i < items.size(); ++i) {
@@ -867,35 +952,15 @@ void StationPilePage::importStationsFromFile(const QString &path)
         }
         const QJsonObject obj = items.at(i).toObject();
         const QString name = obj[QStringLiteral("name")].toString().trimmed();
-        const QString address = obj[QStringLiteral("address")].toString().trimmed();
-        const double nan = std::numeric_limits<double>::quiet_NaN();
-        const double lng = obj[QStringLiteral("lng")].toDouble(nan);
-        const double lat = obj[QStringLiteral("lat")].toDouble(nan);
-        const double price = obj[QStringLiteral("pricePerKwh")].toDouble(nan);
-        const double pileCount = obj[QStringLiteral("pileCount")].toDouble(nan);
-
+        QJsonObject payload;
         QString error;
-        if (name.isEmpty() || address.isEmpty())
-            error = QStringLiteral("name/address 不能为空");
-        else if (std::isnan(lng) || lng < -180.0 || lng > 180.0 || std::isnan(lat) || lat < -90.0 || lat > 90.0)
-            error = QStringLiteral("lng/lat 非法或超出范围");
-        else if (std::isnan(price) || price <= 0)
-            error = QStringLiteral("pricePerKwh 必须大于 0");
-        else if (std::isnan(pileCount) || pileCount != std::floor(pileCount) || pileCount < 1 || pileCount > 100)
-            error = QStringLiteral("pileCount 必须为 1 至 100 的整数");
-
-        if (!error.isEmpty()) {
-            failures << QStringLiteral("%1（%2）：%3").arg(label).arg(name.isEmpty() ? QStringLiteral("未命名") : name).arg(error);
+        if (!StationImport::validateStationEntry(obj, &payload, &error)) {
+            failures << QStringLiteral("%1（%2）：%3")
+                            .arg(label)
+                            .arg(name.isEmpty() ? QStringLiteral("未命名") : name)
+                            .arg(error);
             continue;
         }
-
-        QJsonObject payload;
-        payload[QStringLiteral("name")] = name;
-        payload[QStringLiteral("address")] = address;
-        payload[QStringLiteral("lng")] = lng;
-        payload[QStringLiteral("lat")] = lat;
-        payload[QStringLiteral("pricePerKwh")] = price;
-        payload[QStringLiteral("pileCount")] = static_cast<int>(pileCount);
         queue.append(QPair<QString, QJsonObject>(name, payload));
     }
 

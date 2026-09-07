@@ -474,14 +474,20 @@ static void scenarioStationOps(const QString &host, quint16 port)
     CHECK(waitFor([&] { return stationTable->rowCount() == 2; }));
     log(QStringLiteral("搜索/清空搜索"));
 
-    // 新增站点（对话框填写四个输入框）
+    // 新增站点（对话框：四个站点输入框 + v2.5 电桩清单表格，默认 2 行）
     g_dialogHandlers << [](QDialog *d) {
         const auto edits = plainEdits(d);
-        CHECK(edits.size() == 4); // 站名/地址/经度/纬度
+        CHECK(edits.size() == 6); // 站名/地址/经度/纬度 + 2 行电桩编号编辑框
         edits[0]->setText(QStringLiteral("自动化测试站"));
         edits[1]->setText(QStringLiteral("测试地址 1 号"));
         edits[2]->setText(QStringLiteral("116.300000"));
         edits[3]->setText(QStringLiteral("39.950000"));
+        QTableWidget *pileTable = d->findChild<QTableWidget *>(QStringLiteral("addStationPileTable"));
+        CHECK(pileTable != nullptr && pileTable->rowCount() == 2);
+        if (pileTable && pileTable->rowCount() == 2) {
+            qobject_cast<QLineEdit *>(pileTable->cellWidget(0, 0))->setText(QStringLiteral("P-7001"));
+            qobject_cast<QLineEdit *>(pileTable->cellWidget(1, 0))->setText(QStringLiteral("P-7002"));
+        }
         d->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
     };
     CHECK(clickButton(page, QStringLiteral("新增站点")));
@@ -507,7 +513,8 @@ static void scenarioStationOps(const QString &host, quint16 port)
     QFile f(QStringLiteral("/tmp/p7_import_stations.json"));
     CHECK(f.open(QIODevice::WriteOnly));
     f.write("[{\"name\":\"导入测试站\",\"address\":\"导入地址\",\"lng\":116.4,\"lat\":39.9,"
-            "\"pricePerKwh\":1.35,\"pileCount\":2}]");
+            "\"pricePerKwh\":1.35,\"piles\":[{\"code\":\"P-8801\",\"type\":\"fast\",\"powerKw\":60.0},"
+            "{\"code\":\"P-8802\",\"type\":\"slow\",\"powerKw\":7.0}]}]");
     f.close();
     QMetaObject::invokeMethod(page, "importStationsFromFile",
                               Q_ARG(QString, QStringLiteral("/tmp/p7_import_stations.json")));

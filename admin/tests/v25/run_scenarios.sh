@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# v2.4 协议验证场景一键运行：station_add 已随 v2.5 改为显式 piles 清单，8888 上的
-# v2.4 真实服务端不再兼容，故改为每场景独立启动 ../mock_server_v25.py 假服务端
-# （v2.4 语义 + v2.5 station_add，端口 18894）。截图输出到 shotdir（默认 /tmp）。
+# v2.5 协议验证场景一键运行：validate 离线；addstation/importflow 每场景用全新状态的
+# ../mock_server_v25.py（端口 8893）驱动 harness。截图输出到 shotdir（默认 /tmp）。
 # 用法: run_scenarios.sh <harness_binary> [shotdir]
 # 依赖: offscreen 平台（脚本内已设）。进程清理按 PID（禁用 pkill -f）。
 set -u
@@ -10,9 +9,9 @@ SHOTDIR=${2:-/tmp}
 DIR=$(cd "$(dirname "$0")" && pwd)
 MOCK="$DIR/../mock_server_v25.py"
 export QT_QPA_PLATFORM=offscreen
-export XDG_CONFIG_HOME=/tmp/evcp-v24-harness-xdg
+export XDG_CONFIG_HOME=/tmp/evcp-v25-harness-xdg
 mkdir -p "$XDG_CONFIG_HOME" "$SHOTDIR"
-PORT=18894
+PORT=8893
 PASS=0; FAIL=0
 
 kill_port() {
@@ -22,19 +21,19 @@ kill_port() {
   done
 }
 
-run() {
+run_mock_scenario() {
   local name=$1
   echo "===== $name ====="
   kill_port $PORT
   sleep 0.3
-  python3 "$MOCK" $PORT >"/tmp/v24_mock_${name}.log" 2>&1 &
+  python3 "$MOCK" $PORT >"/tmp/v25_mock_${name}.log" 2>&1 &
   local mpid=$!
   sleep 0.5
   if ! kill -0 "$mpid" 2>/dev/null; then
-    echo "----- $name: MOCK FAILED TO START (see /tmp/v24_mock_${name}.log)"
+    echo "----- $name: MOCK FAILED TO START (see /tmp/v25_mock_${name}.log)"
     FAIL=$((FAIL+1)); return
   fi
-  timeout 180 "$BIN" --scenario "$name" --host 127.0.0.1 --port $PORT --shotdir "$SHOTDIR" 2>&1
+  timeout 120 "$BIN" --scenario "$name" --host 127.0.0.1 --port $PORT --shotdir "$SHOTDIR" 2>&1
   local rc=$?
   kill "$mpid" 2>/dev/null; wait "$mpid" 2>/dev/null
   if [ $rc -eq 0 ]; then PASS=$((PASS+1)); echo "----- $name: PASS"
@@ -42,9 +41,14 @@ run() {
   else FAIL=$((FAIL+1)); echo "----- $name: FAIL rc=$rc"; fi
 }
 
-run pileocc
-run useredit
-run orderops
+echo "===== validate ====="
+timeout 60 "$BIN" --scenario validate --shotdir "$SHOTDIR" 2>&1
+rc=$?
+if [ $rc -eq 0 ]; then PASS=$((PASS+1)); echo "----- validate: PASS"
+else FAIL=$((FAIL+1)); echo "----- validate: FAIL rc=$rc"; fi
+
+run_mock_scenario addstation
+run_mock_scenario importflow
 
 echo "===== summary: PASS=$PASS FAIL=$FAIL ====="
 [ "$FAIL" -eq 0 ]
