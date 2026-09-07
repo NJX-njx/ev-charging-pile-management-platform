@@ -1,5 +1,7 @@
-// admin 模块 v2.4 协议验证 harness（offscreen）：链接真实 MainWindow/各页面/SocketClient，
-// 直连 v2.4 真实服务端（默认 127.0.0.1:8888），每场景用独立的第二连接以用户身份
+// admin 模块 v2.4 协议验证 harness（offscreen）：链接真实 MainWindow/各页面/SocketClient。
+// v2.5 起 station_add 改为显式 piles 清单，真实服务端（v2.4，127.0.0.1:8888）不再兼容，
+// 故改为直连 ../mock_server_v25.py 假服务端（v2.4 语义 + v2.5 station_add，
+// run_scenarios.sh 每场景独立实例）；每场景用独立的第二连接以用户身份
 // 自建站点/用户/订单数据，再驱动管理端 UI 做结构化断言并截图。
 //
 // 退出码：0=PASS，2=FAIL，3=harness 自身错误。
@@ -196,13 +198,23 @@ struct SeedStation {
 static bool seedStation(SocketClient *admin, int pileCount, SeedStation *out)
 {
     out->name = QStringLiteral("v24自测站%1").arg(QDateTime::currentMSecsSinceEpoch() % 1000000000);
+    // v2.5：station_add 改为显式 piles 电桩清单（协议 7.8，pileCount 废弃）
+    const QString prefix = QStringLiteral("V%1").arg(QDateTime::currentMSecsSinceEpoch() % 1000000);
+    QJsonArray pileSpecs;
+    for (int i = 0; i < pileCount; ++i) {
+        pileSpecs.append(QJsonObject{{QStringLiteral("code"),
+                                  QStringLiteral("%1-%2").arg(prefix).arg(i, 2, 10, QLatin1Char('0'))},
+                                 {QStringLiteral("type"), i % 2 == 0 ? QStringLiteral("fast")
+                                                                     : QStringLiteral("slow")},
+                                 {QStringLiteral("powerKw"), i % 2 == 0 ? 60.0 : 7.0}});
+    }
     auto r = request(admin, QStringLiteral("station_add"),
                      QJsonObject{{QStringLiteral("name"), out->name},
                                  {QStringLiteral("address"), QStringLiteral("v24自测地址")},
                                  {QStringLiteral("lng"), 121.5},
                                  {QStringLiteral("lat"), 38.9},
                                  {QStringLiteral("pricePerKwh"), 1.20},
-                                 {QStringLiteral("pileCount"), pileCount}});
+                                 {QStringLiteral("piles"), pileSpecs}});
     if (r->code != 0)
         return false;
     out->stationId = r->data[QStringLiteral("station")].toObject()[QStringLiteral("stationId")].toInt();
