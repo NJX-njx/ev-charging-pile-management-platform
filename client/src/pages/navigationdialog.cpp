@@ -222,9 +222,21 @@ void NavigationDialog::loadRoute()
         } catch (err) { return; }
         target.dispatchEvent(ev);
     }
-    document.addEventListener('mousedown', function (e) { pressTarget = e.target; fire('touchstart', e); }, true);
-    document.addEventListener('mousemove', function (e) { if (pressTarget) fire('touchmove', e); }, true);
-    document.addEventListener('mouseup', function (e) { if (pressTarget) { fire('touchend', e); pressTarget = null; } }, true);
+    // 只翻译真实输入（isTrusted）：页面组件收到我们派发的触摸事件后，可能再派发
+    // 合成鼠标事件做内部归一化；若不加判断，合成事件会被再次翻译形成无限递归
+    //（拖动地图时 Maximum call stack size exceeded 即由此产生）
+    document.addEventListener('mousedown', function (e) {
+        if (!e.isTrusted) return;
+        pressTarget = e.target; fire('touchstart', e);
+    }, true);
+    document.addEventListener('mousemove', function (e) {
+        if (!e.isTrusted || !pressTarget) return;
+        fire('touchmove', e);
+    }, true);
+    document.addEventListener('mouseup', function (e) {
+        if (!e.isTrusted || !pressTarget) return;
+        fire('touchend', e); pressTarget = null;
+    }, true);
 })();
 )JS"));
         profile->scripts()->insert(touchShim);
