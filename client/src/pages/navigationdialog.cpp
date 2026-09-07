@@ -16,6 +16,29 @@
 #include <QWebEngineScript>
 #include <QWebEngineScriptCollection>
 #include <QWebEngineView>
+
+namespace {
+
+// 腾讯导航 H5 自身使用已废弃的 Application Cache（<html manifest="nav.appcache">），
+// Chromium 会反复输出 deprecation / origin-trial 警告。这是对方页面行为、不影响
+// 功能且无法由我方修复，只把这两条已知噪音从应用日志滤掉，其余 JS 控制台消息
+// 照常输出（便于调试）
+class NavWebEnginePage : public QWebEnginePage
+{
+public:
+    using QWebEnginePage::QWebEnginePage;
+
+protected:
+    void javaScriptConsoleMessage(JavaScriptConsoleMessageLevel level, const QString &message,
+                                  int lineNumber, const QString &sourceID) override
+    {
+        if (message.contains(QLatin1String("Application Cache")))
+            return;
+        QWebEnginePage::javaScriptConsoleMessage(level, message, lineNumber, sourceID);
+    }
+};
+
+} // namespace
 #endif
 
 bool NavigationDialog::isAvailable()
@@ -205,7 +228,7 @@ void NavigationDialog::loadRoute()
 })();
 )JS"));
         profile->scripts()->insert(touchShim);
-        m_view->setPage(new QWebEnginePage(profile, m_view));
+        m_view->setPage(new NavWebEnginePage(profile, m_view));
         m_stack->addWidget(m_view);
     }
     m_view->load(buildRouteUrl(m_mode, m_fromLng, m_fromLat, m_toLng, m_toLat,

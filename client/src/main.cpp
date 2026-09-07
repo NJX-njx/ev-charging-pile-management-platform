@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFile>
 #include <QLibraryInfo>
+#include <QLoggingCategory>
 
 #include "mainwindow.h"
 #include "model/appconfig.h"
@@ -47,6 +48,10 @@ int main(int argc, char *argv[])
     // QtWebEngineWidgets 要求：QApplication 构造前开启 GL 上下文共享，
     // 否则部分显卡/虚拟机环境下渲染 Web 内容会崩溃
     QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+    // qt.webenginecontext 每次初始化打印的 GL/Chromium 参数清单只是诊断信息，
+    // 对使用者是纯噪音，默认关闭（排查 GPU 问题时临时改为 true 即可）
+    QLoggingCategory::setFilterRules(QStringLiteral("qt.webenginecontext.debug=false\n"
+                                                    "qt.webenginecontext.info=false"));
     ensureImModulePluginAvailable();
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("evcp-client"));
