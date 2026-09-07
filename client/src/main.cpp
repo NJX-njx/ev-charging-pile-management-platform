@@ -44,6 +44,9 @@ void ensureImModulePluginAvailable()
 
 int main(int argc, char *argv[])
 {
+    // QtWebEngineWidgets 要求：QApplication 构造前开启 GL 上下文共享，
+    // 否则部分显卡/虚拟机环境下渲染 Web 内容会崩溃
+    QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
     ensureImModulePluginAvailable();
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("evcp-client"));

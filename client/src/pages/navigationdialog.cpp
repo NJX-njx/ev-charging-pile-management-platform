@@ -160,8 +160,10 @@ void NavigationDialog::loadRoute()
         m_view = new QWebEngineView(m_stack);
         // 腾讯 routeplan 页面按 UA 分流：默认桌面 UA 返回横屏桌面版 H5，竖屏
         // 窗口内出现横向滚动。为本对话框单独建 profile 设移动端 UA（默认
-        // profile 与 mapbridge 定位页共享，不能全局改），使其返回竖屏移动版
-        auto *profile = new QWebEngineProfile(m_view);
+        // profile 与 mapbridge 定位页共享，不能全局改），使其返回竖屏移动版。
+        // profile 必须比 page 长寿：挂在对话框上（晚于 m_stack 创建而最后析构），
+        // 若挂在 view 上会先于 page 析构，触发 use-after-free 崩溃
+        auto *profile = new QWebEngineProfile(this);
         profile->setHttpUserAgent(QStringLiteral(
             "Mozilla/5.0 (Linux; Android 13; Pixel 6) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"));
