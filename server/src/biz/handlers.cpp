@@ -1291,9 +1291,47 @@ Response hStationAdd(const QJsonObject &p, Session &, QSqlDatabase db)
     qint64 priceFen = 0;
     if (!Protocol::readMoneyFen(p, QStringLiteral("pricePerKwh"), kMaxPriceFen, priceFen))
         return fail(2001, QStringLiteral("invalid pricePerKwh"));
-    qint64 pileCount = 0;
-    if (!Protocol::readInt(p, QStringLiteral("pileCount"), 1, 100, pileCount))
-        return fail(2001, QStringLiteral("invalid pileCount"));
+    if (!p.value(QStringLiteral("piles")).isArray())
+        return fail(2001, QStringLiteral("invalid piles"));
+    const QJsonArray piles = p.value(QStringLiteral("piles")).toArray();
+    if (piles.isEmpty() || piles.size() > 100)
+        return fail(2001, QStringLiteral("invalid piles"));
+    QStringList codes;
+    QStringList types;
+    QList<double> powers;
+    for (const QJsonValue &v : piles) {
+        if (!v.isObject())
+            return fail(2001, QStringLiteral("invalid pile entry"));
+        const QJsonObject pile = v.toObject();
+        if (!pile.value(QStringLiteral("code")).isString())
+            return fail(2001, QStringLiteral("invalid code"));
+        const QString code = pile.value(QStringLiteral("code")).toString().trimmed();
+        if (code.isEmpty() || code.length() > 20)
+            return fail(2001, QStringLiteral("invalid code"));
+        if (codes.contains(code))
+            return fail(2001, QStringLiteral("duplicate code"));
+        if (!pile.value(QStringLiteral("type")).isString()
+            || !validPileType(pile.value(QStringLiteral("type")).toString()))
+            return fail(2001, QStringLiteral("invalid type"));
+        double powerKw = 0.0;
+        if (!readPowerKw(pile, powerKw))
+            return fail(2001, QStringLiteral("invalid powerKw"));
+        codes.append(code);
+        types.append(pile.value(QStringLiteral("type")).toString());
+        powers.append(powerKw);
+    }
+    QStringList placeholders;
+    for (int i = 0; i < codes.size(); ++i)
+        placeholders.append(QStringLiteral("?"));
+    QSqlQuery dup(db);
+    dup.prepare(QStringLiteral("SELECT COUNT(*) FROM piles WHERE code IN (")
+                + placeholders.join(QLatin1Char(',')) + QStringLiteral(")"));
+    for (const QString &code : codes)
+        dup.addBindValue(code);
+    if (!exec(dup) || !dup.next())
+        return fail(5000, QStringLiteral("internal error"));
+    if (dup.value(0).toLongLong() > 0)
+        return fail(2001, QStringLiteral("code already exists"));
 
     if (!db.transaction())
         return fail(5000, QStringLiteral("internal error"));
@@ -1310,35 +1348,20 @@ Response hStationAdd(const QJsonObject &p, Session &, QSqlDatabase db)
         return fail(5000, QStringLiteral("internal error"));
     }
     const qint64 stationId = ins.lastInsertId().toLongLong();
-    QSqlQuery counter(db);
-    if (!counter.exec(QStringLiteral("INSERT OR IGNORE INTO counters (key, value)"
-                                     " VALUES ('pileSeq', 0)"))
-        || !counter.exec(QStringLiteral("SELECT value FROM counters WHERE key = 'pileSeq'"))
-        || !counter.next()) {
-        db.rollback();
-        return fail(5000, QStringLiteral("internal error"));
-    }
-    const qint64 base = counter.value(0).toLongLong();
-    QSqlQuery counterUpd(db);
-    counterUpd.prepare(QStringLiteral("UPDATE counters SET value = ? WHERE key = 'pileSeq'"));
-    counterUpd.addBindValue(base + pileCount);
-    if (!exec(counterUpd)) {
-        db.rollback();
-        return fail(5000, QStringLiteral("internal error"));
-    }
-    for (qint64 i = 1; i <= pileCount; ++i) {
-        const qint64 n = base + i;
-        const QString code = QStringLiteral("P-%1").arg(n, 4, 10, QLatin1Char('0'));
-        const bool slow = (n % 2 == 1);
-        QSqlQuery pileIns(db);
-        pileIns.prepare(QStringLiteral("INSERT INTO piles (code, stationId, type, powerKw, status)"
-                                       " VALUES (?, ?, ?, ?, 'idle')"));
-        pileIns.addBindValue(code);
-        pileIns.addBindValue(stationId);
-        pileIns.addBindValue(slow ? QStringLiteral("slow") : QStringLiteral("fast"));
-        pileIns.addBindValue(slow ? 7.0 : 60.0);
-        if (!exec(pileIns)) {
+    QSqlQuery pileIns(db);
+    pileIns.prepare(QStringLiteral("INSERT INTO piles (code, stationId, type, powerKw, status)"
+                                   " VALUES (?, ?, ?, ?, 'idle')"));
+    for (int i = 0; i < codes.size(); ++i) {
+        pileIns.bindValue(0, codes.at(i));
+        pileIns.bindValue(1, stationId);
+        pileIns.bindValue(2, types.at(i));
+        pileIns.bindValue(3, powers.at(i));
+        if (!pileIns.exec()) {
             db.rollback();
+            // 并发插入撞上 code 的列级 UNIQUE 约束同样按编号冲突处理。
+            if (pileIns.lastError().text().contains(QLatin1String("UNIQUE")))
+                return fail(2001, QStringLiteral("code already exists"));
+            qWarning() << "SQL error:" << pileIns.lastError().text();
             return fail(5000, QStringLiteral("internal error"));
         }
     }
@@ -1353,7 +1376,7 @@ Response hStationAdd(const QJsonObject &p, Session &, QSqlDatabase db)
         return fail(5000, QStringLiteral("internal error"));
     QJsonObject data;
     data.insert(QStringLiteral("station"), Protocol::stationSummaryJson(q));
-    data.insert(QStringLiteral("createdPileCount"), pileCount);
+    data.insert(QStringLiteral("createdPileCount"), static_cast<int>(codes.size()));
     return ok(data);
 }
 
