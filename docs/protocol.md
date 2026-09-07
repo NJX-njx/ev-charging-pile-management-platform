@@ -14,6 +14,8 @@
 
 **v2.4（9 月 6 日）**：`charge_stop` 停止充电时在同一事务内释放电桩并累计充电数据，`pending_payment`（待结算）订单不再占用充电桩，`charge_settle` 只负责扣款与完成订单（**行为变更**）；明确区分「占用订单」（`reserved`/`charging`，占住电桩）与「未完成订单」（另含 `pending_payment`，欠费未结）；`pile_list` 电桩对象新增 `occupancy` 字段区分预约占用与充电占用；`user_update` 扩展支持修改 `avatar` 与 `balance` 并返回完整资料（含头像），新增 `user_detail`；新增 `admin_order_cancel`（取消预约订单）与 `admin_order_stop`（停止充电订单）；`pile_restart`/`pile_disable` 放开到 `in_use` 电桩，占用订单在同一事务内被强制终结并随响应返回；`pile_update`/`pile_delete`/`station_delete`/`pile_active_order` 的订单约束由「未完成订单」收窄为「占用订单」；`user_update` 的手机号唯一性与 3.4 对齐（已删除用户的手机号不再占用）。
 
+**v2.5（9 月 7 日）**：`station_add` 的电桩由「服务端按固定规则生成」改为调用方显式提交 `piles` 数组（**破坏性变更**，`pileCount` 字段移除）；种子/导入文件（`tools/seed_stations.json`）相应改为逐桩写明编号、类型、功率。
+
 ## 1. 通信边界
 
 | 调用方 | 服务 | 协议 | 默认地址 | 用途 |
@@ -198,7 +200,7 @@
 | `pile_disable` | 管理员 | 禁用电桩（置为 fault；v2.4 起含 `in_use`，占用订单被强制终结） |
 | `pile_active_order` | 管理员 | 查看电桩的占用订单（`reserved`/`charging`） |
 | `station_list` | 管理员 | 分页查询站点，支持站名搜索 |
-| `station_add` | 管理员 | 新增站点和模拟电桩 |
+| `station_add` | 管理员 | 新增站点及显式给定的电桩清单（v2.5 起） |
 | `station_update` | 管理员 | 修改站点信息 |
 | `station_delete` | 管理员 | 逻辑删除站点及站内电桩 |
 | `user_list` | 管理员 | 查询用户 |
@@ -649,21 +651,22 @@ Qt 用户端先通过腾讯地图把区域或手动地址转换为坐标，再�
 
 ### 7.8 station_add 新增站点
 
-请求：
+请求（v2.5 起，`piles` 替代 `pileCount`，**破坏性变更**）：
 
 ```json
-{"seq":9,"type":"station_add","payload":{"name":"高新园区站","address":"黄浦路100号","lng":121.520,"lat":38.860,"pricePerKwh":1.30,"pileCount":8}}
+{"seq":9,"type":"station_add","payload":{"name":"高新园区站","address":"黄浦路100号","lng":121.520,"lat":38.860,"pricePerKwh":1.30,"piles":[{"code":"P-0901","type":"fast","powerKw":60.0},{"code":"P-0902","type":"slow","powerKw":7.0}]}}
 ```
 
 响应：
 
 ```json
-{"seq":9,"type":"station_add","code":0,"msg":"ok","data":{"station":{"stationId":9,"name":"高新园区站","address":"黄浦路100号","lng":121.520,"lat":38.860,"pricePerKwh":1.30,"pileTotal":8,"pileIdle":8,"onlineRate":1.00},"createdPileCount":8}}
+{"seq":9,"type":"station_add","code":0,"msg":"ok","data":{"station":{"stationId":9,"name":"高新园区站","address":"黄浦路100号","lng":121.520,"lat":38.860,"pricePerKwh":1.30,"pileTotal":2,"pileIdle":2,"onlineRate":1.00},"createdPileCount":2}}
 ```
 
-- `name` 和 `address` 去除首尾空白后不能为空；`pricePerKwh` 必须大于 `0`，最多 2 位小数；`pileCount` 为 1 至 100 的整数。
-- 服务端在一个事务中创建站点和模拟电桩。电桩编号必须全局唯一；类型和功率按服务端固定、可重复测试的规则生成。
-- 参数非法返回 `2001`；事务中任何一步失败必须整体回滚。
+- `name` 和 `address` 去除首尾空白后不能为空；`pricePerKwh` 必须大于 `0`，最多 2 位小数。
+- `piles` 必填，为 1 至 100 条的数组。**服务端不再按规则生成电桩**，站点与电桩数据完全由调用方（如导入文件）显式给定。
+- 每条电桩：`code` 去除首尾空白后长度 1 至 20，全局唯一（含已删除电桩的编号），与既有电桩或同数组内其他条目重复均返回 `2001`；`type` 必须是电桩类型枚举；`powerKw` 必须大于 `0`。电桩初始状态为 `idle`，累计次数与时长为 `0`。
+- 服务端在一个事务中创建站点并逐条插入电桩；任何一步失败必须整体回滚。参数非法返回 `2001`。
 
 ### 7.9 user_list 用户查询
 
