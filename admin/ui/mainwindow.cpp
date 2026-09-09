@@ -20,7 +20,7 @@ MainWindow::MainWindow(SocketClient *client, const QString &username, const QStr
     ui->setupUi(this);
     setMinimumSize(1280, 800);
 
-    // 电桩状态总览已并入「站点与电桩」页顶部，不再单设导航页
+    // 电桩状态总览位于「站点与电桩」页顶部。
     const QStringList modules = {
         QStringLiteral("销售业绩"),
         QStringLiteral("站点与电桩"),

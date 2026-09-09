@@ -9,7 +9,7 @@
 #include <cmath>
 #include <limits>
 
-// 协议 v2.5（7.8 节）站点条目预校验：导入文件与新增站点对话框共用。
+// 站点条目预校验，供导入文件与新增站点对话框共用。
 // 合法数据规整后（code 去空白、type 中文映射为英文枚举）原样透传 station_add；
 // 非法时 error 给出中文原因。type 接受英文枚举 fast/slow 或中文 快充/慢充。
 namespace StationImport {

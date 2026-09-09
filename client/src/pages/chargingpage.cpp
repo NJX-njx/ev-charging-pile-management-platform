@@ -136,7 +136,7 @@ void ChargingPage::refresh()
                                       QMessageBox::warning(this, QStringLiteral("刷新"), msg);
                                   return;
                               }
-                              // 协议 v2.2：未完成订单数组（reserved/charging/pending_payment）
+                              // 未完成订单数组（reserved/charging/pending_payment）
                               QList<Order> orders;
                               const QJsonArray arr = data.value(QStringLiteral("orders")).toArray();
                               orders.reserve(arr.size());
@@ -314,7 +314,7 @@ void ChargingPage::doAction(const QString &type, qint64 orderId, const QString &
                               m_busy = false;
                               m_listContainer->setEnabled(true);
                               if (code == 0) {
-                                  // 操作后整表刷新（v2.2 多订单并行，状态以服务端为准）
+                                  // 操作后整表刷新（多订单并行，状态以服务端为准）
                                   refresh();
                                   if (type == QLatin1String("charge_settle")) {
                                       const double balance = data.value(QStringLiteral("balance")).toDouble();

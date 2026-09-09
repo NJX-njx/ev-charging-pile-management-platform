@@ -55,7 +55,7 @@ constexpr int kPileColStatus = 4;
 constexpr int kPileColCount = 5;
 constexpr int kPileColDuration = 6;
 
-// 状态总览条徽标：objectName 供 QSS 与自动化测试定位，status 属性供配色
+// 状态总览条徽标：objectName 供 QSS 定位，status 属性供配色。
 QLabel *createStatusBadge(const QString &status)
 {
     QLabel *badge = new QLabel(QStringLiteral("--"));
@@ -64,7 +64,7 @@ QLabel *createStatusBadge(const QString &status)
     return badge;
 }
 
-// v2.4：pile_restart/pile_disable 响应中的强制终结订单信息（无占用订单时两字段为 null）
+// pile_restart/pile_disable 响应中的强制终结订单信息（无占用订单时两字段为 null）
 QString affectedOrderNote(const QJsonObject &data)
 {
     const QJsonValue orderId = data[QStringLiteral("affectedOrderId")];
@@ -557,7 +557,7 @@ void StationPilePage::loadPiles(bool force)
                                   m_pileTable->setItem(row, kPileColPower, powerItem);
 
                                   const QString status = p[QStringLiteral("status")].toString();
-                                  // v2.4：占用订单状态（reserved/charging），无占用为 null；
+                                  // 占用订单状态（reserved/charging），无占用为 null；
                                   // 已删除电桩状态列固定显示「已删除」（色板文本-次色），原始状态保留在 UserRole
                                   const QString occupancy = p[QStringLiteral("occupancy")].toString();
                                   QTableWidgetItem *statusItem = new QTableWidgetItem(
@@ -603,7 +603,7 @@ void StationPilePage::updatePileActionButtons()
         deleted = codeItem && codeItem->data(Qt::UserRole + 1).toBool();
     }
     // 已删除记录仅用于历史查看，不作为修改/删除/重启/禁用/占用详情的操作对象
-    // v2.4：远程重启支持任意状态（in_use 时强制终结占用订单）；禁用支持 idle 与 in_use；占用详情仅 in_use
+    // 远程重启支持任意状态（in_use 时强制终结占用订单）；禁用支持 idle 与 in_use；占用详情仅 in_use
     m_restartBtn->setEnabled(hasSelection && !deleted
                              && (status == QStringLiteral("idle") || status == QStringLiteral("in_use")
                                  || status == QStringLiteral("fault")));
@@ -775,7 +775,7 @@ void StationPilePage::onAddStation()
     form->addRow(QStringLiteral("纬度"), latEdit);
     form->addRow(QStringLiteral("单价(元/度)"), priceBox);
 
-    // v2.5：电桩清单显式录入（协议 7.8 piles），服务端不再按数量生成电桩
+    // 显式录入电桩清单。
     QTableWidget *pileTable = new QTableWidget;
     pileTable->setObjectName(QStringLiteral("addStationPileTable"));
     pileTable->setColumnCount(3);
@@ -941,7 +941,7 @@ void StationPilePage::importStationsFromFile(const QString &path)
         return;
     }
 
-    // 逐条预校验（v2.5 协议 7.8：显式 piles 电桩清单），通过后进入发送队列
+    // 逐条预校验（协议 7.8：显式 piles 电桩清单），通过后进入发送队列
     QList<QPair<QString, QJsonObject>> queue;
     QStringList failures;
     for (int i = 0; i < items.size(); ++i) {
@@ -1249,7 +1249,7 @@ void StationPilePage::onRestartClicked()
     const QString status = m_pileTable->item(row, kPileColStatus)->data(Qt::UserRole).toString();
     const QString occupancy = m_pileTable->item(row, kPileColStatus)->data(Qt::UserRole + 1).toString();
 
-    // v2.4：占用中的电桩也可重启，确认文案需说明占用订单将被强制终结（充电中会计费转入待结算）
+    // 占用中的电桩也可重启，确认文案需说明占用订单将被强制终结（充电中会计费转入待结算）
     QString question = QStringLiteral("确定要重启电桩 %1 吗？").arg(code);
     if (status == QStringLiteral("in_use")) {
         question = QStringLiteral("确定要重启电桩 %1 吗？该桩存在占用订单（%2），重启将强制终结该订单%3。")
@@ -1286,7 +1286,7 @@ void StationPilePage::onDisableClicked()
     const QString status = m_pileTable->item(row, kPileColStatus)->data(Qt::UserRole).toString();
     const QString occupancy = m_pileTable->item(row, kPileColStatus)->data(Qt::UserRole + 1).toString();
 
-    // v2.4：in_use 电桩可禁用，占用订单在同一事务内被强制终结（充电中会计费转入待结算）
+    // in_use 电桩可禁用，占用订单在同一事务内被强制终结（充电中会计费转入待结算）
     QString question = QStringLiteral("确定要禁用（停用下线）电桩 %1 吗？禁用后状态变为故障，恢复需远程重启。").arg(code);
     if (status == QStringLiteral("in_use")) {
         question = QStringLiteral("确定要禁用（停用下线）电桩 %1 吗？该桩存在占用订单（%2），禁用将强制终结该订单%3；禁用后状态变为故障，恢复需远程重启。")

@@ -19,10 +19,7 @@
 
 namespace {
 
-// 腾讯导航 H5 自身使用已废弃的 Application Cache（<html manifest="nav.appcache">），
-// Chromium 会反复输出 deprecation / origin-trial 警告。这是对方页面行为、不影响
-// 功能且无法由我方修复，只把这两条已知噪音从应用日志滤掉，其余 JS 控制台消息
-// 照常输出（便于调试）
+// 仅过滤腾讯导航页面的已知 Application Cache 警告。
 class NavWebEnginePage : public QWebEnginePage
 {
 public:
@@ -54,9 +51,7 @@ QUrl NavigationDialog::buildRouteUrl(const QString &type, double fromLng, double
                                      double toLng, double toLat, const QString &stationName,
                                      const QString &fromDescription)
 {
-    // 腾讯地图 URI API：坐标格式为「纬度,经度」；fromcoord 用显式坐标而非
-    // CurrentLocation 字符串（后者依赖页面内定位授权，桌面端无法生成路线）；
-    // referer 为应用标识（此处用已配置 Key）
+    // 坐标使用显式「纬度,经度」，避免依赖桌面定位授权；referer 使用地图 Key。
     QUrlQuery query;
     query.addQueryItem(QStringLiteral("type"), type);
     query.addQueryItem(QStringLiteral("from"),
@@ -167,8 +162,7 @@ NavigationDialog::NavigationDialog(const QString &stationName, double fromLng, d
             loadRoute();
     });
 
-    // 近全屏利用主窗口区域：旧固定 360×560 下路线规划 H5 的地图与结果
-    // 面板显示不全；改为按顶层窗口尺寸留少量边距，无父窗时退回等效默认尺寸
+    // 按主窗口尺寸预留边距，保证地图与路线面板可见。
     const QWidget *anchor = parent ? parent->window() : nullptr;
     if (anchor)
         resize(anchor->size() - QSize(24, 64));
@@ -181,19 +175,13 @@ void NavigationDialog::loadRoute()
 #ifdef EVCP_HAVE_WEBENGINE
     if (!m_view) {
         m_view = new QWebEngineView(m_stack);
-        // 腾讯 routeplan 页面按 UA 分流：默认桌面 UA 返回横屏桌面版 H5，竖屏
-        // 窗口内出现横向滚动。为本对话框单独建 profile 设移动端 UA（默认
-        // profile 与 mapbridge 定位页共享，不能全局改），使其返回竖屏移动版。
-        // profile 必须比 page 长寿：挂在对话框上（晚于 m_stack 创建而最后析构），
-        // 若挂在 view 上会先于 page 析构，触发 use-after-free 崩溃
+        // 独立 profile 使用移动端 UA，避免影响定位页。
+        // profile 必须晚于 page 析构，防止访问已释放的对象。
         auto *profile = new QWebEngineProfile(this);
         profile->setHttpUserAgent(QStringLiteral(
             "Mozilla/5.0 (Linux; Android 13; Pixel 6) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"));
-        // 移动版 H5 的按钮直接绑定 touchend/touchstart（如地图缩放、下载入口），
-        // 桌面 WebEngine 只派发鼠标事件，这些处理器永远不会触发。在导航专用
-        // profile 注入 DocumentCreation/MainWorld 脚本，把鼠标按下/移动/抬起
-        // 翻译成对应触摸事件；脚本仅在无真实触摸能力的环境启用
+        // 无触摸设备时，将鼠标事件转换为导航页面需要的触摸事件。
         QWebEngineScript touchShim;
         touchShim.setName(QStringLiteral("evcpTouchShim"));
         touchShim.setInjectionPoint(QWebEngineScript::DocumentCreation);
@@ -222,9 +210,7 @@ void NavigationDialog::loadRoute()
         } catch (err) { return; }
         target.dispatchEvent(ev);
     }
-    // 只翻译真实输入（isTrusted）：页面组件收到我们派发的触摸事件后，可能再派发
-    // 合成鼠标事件做内部归一化；若不加判断，合成事件会被再次翻译形成无限递归
-    //（拖动地图时 Maximum call stack size exceeded 即由此产生）
+    // 仅转换真实输入，避免合成鼠标事件再次触发转换而无限递归。
     document.addEventListener('mousedown', function (e) {
         if (!e.isTrusted) return;
         pressTarget = e.target; fire('touchstart', e);

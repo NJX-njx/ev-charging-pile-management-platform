@@ -11,8 +11,7 @@ namespace {
 
 QString g_dbPath;
 
-// 终态结构（协议 v2.2）：只在空库上一次性建表，不做任何旧结构的就地迁移。
-// 已存在的库文件必须先通过 schemaCompatible() 自检才会继续使用。
+// 仅为空库建表；现有数据库须通过结构校验。
 const char *const kSchema[] = {
     "CREATE TABLE IF NOT EXISTS admins ("
     " adminId INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -121,8 +120,7 @@ bool tableHasColumns(QSqlDatabase &db, const char *table,
     return true;
 }
 
-// 只接受终态结构：关键表/列齐全；users.phone 上没有旧的列级 UNIQUE（会表现为
-// sqlite_autoindex，并挡住已删除手机号的重新注册）；部分唯一索引已就位。
+// 校验表、列和索引；手机号唯一性仅约束未删除用户。
 bool schemaCompatible(QSqlDatabase &db)
 {
     if (!tableHasColumns(db, "admins", {"adminId", "username", "passwordHash"})

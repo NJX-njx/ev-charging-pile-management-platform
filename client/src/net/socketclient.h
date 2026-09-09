@@ -33,7 +33,7 @@ public:
     QString serverDescription() const;
 
     qint64 sendRequest(const QString &type, const QJsonObject &payload, ResponseCallback cb);
-    // v2 双方式登录：password 与 code 二选一（同时缺省或同时提供服务端返回 2001）
+    // 双方式登录：password 与 code 二选一（同时缺省或同时提供服务端返回 2001）
     void login(const QString &phone, const QString &password, const QString &code, ResponseCallback cb);
     // 设置/修改密码成功后调用，使断线自动重登改用密码
     void setSessionPassword(const QString &password);

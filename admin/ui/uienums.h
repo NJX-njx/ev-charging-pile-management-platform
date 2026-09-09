@@ -28,8 +28,8 @@ inline QColor pileStatusColor(const QString &status)
     return QColor(0, 0, 0);
 }
 
-// v2.4：in_use 电桩按占用订单类型（pile_list 的 occupancy 字段）区分显示为「预约中/充电中」；
-// occupancy 为空（无占用或旧服务端未返回）时回退到物理状态文案「在用」
+// in_use 电桩按占用订单类型（pile_list 的 occupancy 字段）区分显示为「预约中/充电中」；
+// occupancy 为空时显示物理状态文案「在用」。
 inline QString pileDisplayText(const QString &status, const QString &occupancy)
 {
     if (status == QStringLiteral("in_use")) {

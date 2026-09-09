@@ -1,16 +1,5 @@
-// Excel 式表格排序与筛选助手。
-//
-// 用法（页面表格 setColumnCount + setHorizontalHeaderLabels 之后）：
-//     m_ft = new FilterTable(m_table, this);
-//     m_ft->setExcludedColumns({9});              // 操作列不参与排序/筛选
-//     m_ft->setScopeNote(QStringLiteral("..."));   // 可选，附加到表头 tooltip
-// 之后每次向表格填完数据调用一次 m_ft->apply()（恢复排序/筛选状态），
-// 选中行用 m_ft->rowToSelect(previousId) 计算（跳过被筛选隐藏的行）。
-//
-// 交互：点击表头列名在 升序→降序→不排序 间切换（不排序还原数据装入顺序）；
-// 点击表头右侧漏斗图标弹出该列去重值多选清单，取消勾选的值对应行被隐藏，
-// 筛选与排序可叠加。服务端分页的页面筛选/排序只作用于当前页已装入的数据，
-// 应通过 setScopeNote 在表头 tooltip 注明。
+// 表格填充后调用 apply() 恢复排序筛选，rowToSelect() 恢复选中行。
+// 分页表格仅处理当前页，调用方须通过 setScopeNote() 提示作用范围。
 
 #include "filtertable.h"
 
@@ -132,8 +121,7 @@ bool FilterHeaderView::nearSectionBoundary(const QPoint &pos) const
 void FilterHeaderView::paintEvent(QPaintEvent *event)
 {
     QHeaderView::paintEvent(event);
-    // 叠加绘制必须在 paintEvent 里直接画到 viewport：实测在 paintSection 中追加绘制
-    // 不会落屏（Qt 6.2 offscreen/xcb 均如此），因此改为基类绘制完成后统一叠加
+    // 基类绘制完成后，在 viewport 上叠加排序与筛选图标。
     QPainter painter(viewport());
     painter.setRenderHint(QPainter::Antialiasing);
     for (int i = 0; i < count(); ++i) {

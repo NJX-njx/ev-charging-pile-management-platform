@@ -89,7 +89,7 @@ bool readDate(const QJsonObject &p, const QString &key, QDate &out, bool &presen
     return true;
 }
 
-// Optional includeDeleted flag (v2.2, admin lists only): absent means false.
+// Optional includeDeleted flag (admin lists only): absent means false.
 bool readIncludeDeleted(const QJsonObject &p, bool &out)
 {
     out = false;
@@ -222,7 +222,7 @@ Response hUserLogin(const QJsonObject &p, Session &s, QSqlDatabase db)
             return fail(1001, QStringLiteral("invalid credentials"));
     }
     if (!found) {
-        // v2.2：密码方式自动注册直接保存该密码（hasPassword=true）；
+        // 密码方式自动注册直接保存该密码（hasPassword=true）；
         // 验证码方式注册不设置密码（null QString 绑定为 SQL NULL）。
         QString passwordHash;
         if (byPassword) {
@@ -595,7 +595,7 @@ Response hReserve(const QJsonObject &p, Session &s, QSqlDatabase db)
         db.rollback();
         return fail(3004, QStringLiteral("balance too low, please recharge first"));
     }
-    // v2.2：允许同一用户同时拥有多个未完成订单（3005 已废弃，不再检查）。
+    // 同一用户可以拥有多个未完成订单。
     QSqlQuery pq(db);
     pq.prepare(QStringLiteral("SELECT p.status, p.stationId, s.priceFenPerKwh"
                               " FROM piles p JOIN stations s ON s.stationId = p.stationId"
@@ -670,7 +670,7 @@ Response hStart(const QJsonObject &p, Session &s, QSqlDatabase db)
     return orderDataResponse(fresh);
 }
 
-// v2.4：charging 订单计费停止并释放电桩（累计充电次数与时长），调用方须已开启事务。
+// charging 订单计费停止并释放电桩（累计充电次数与时长），调用方须已开启事务。
 bool stopChargingInTx(QSqlDatabase db, qint64 orderId, qint64 pileId, qint64 startTime,
                       qint64 unitPriceFen, double powerKw)
 {
@@ -697,7 +697,7 @@ bool stopChargingInTx(QSqlDatabase db, qint64 orderId, qint64 pileId, qint64 sta
     return exec(upd) && exec(release);
 }
 
-// v2.4：强制终结电桩的占用订单（reserved→cancelled，charging→计费停止），调用方须已开启事务。
+// 强制终结电桩的占用订单（reserved→cancelled，charging→计费停止），调用方须已开启事务。
 // 无占用订单时 affectedOrderId 保持 0、affectedStatus 保持空。
 bool terminateOccupyingOrderInTx(QSqlDatabase db, qint64 pileId, qint64 &affectedOrderId,
                                  QString &affectedStatus)

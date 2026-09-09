@@ -11,13 +11,6 @@ constexpr int kReconnectDelayMs = 3000;
 constexpr int kConnectTimeoutMs = 8000;
 constexpr qint64 kMaxMessageBytes = 2 * 1024 * 1024;
 
-// 连接建立超时：默认 8s，可用 EVCP_CONNECT_TIMEOUT_MS 覆盖（测试用）
-int connectTimeoutMs()
-{
-    bool ok = false;
-    const int v = qEnvironmentVariableIntValue("EVCP_CONNECT_TIMEOUT_MS", &ok);
-    return (ok && v > 0) ? v : kConnectTimeoutMs;
-}
 }
 
 SocketClient::SocketClient(QObject *parent)
@@ -71,7 +64,7 @@ void SocketClient::open(const QString &host, quint16 port)
         m_socket->abort();
     }
     m_connectInProgress = true;
-    m_connectTimer->start(connectTimeoutMs());
+    m_connectTimer->start(kConnectTimeoutMs);
     m_socket->connectToHost(host, port);
 }
 
@@ -215,10 +208,7 @@ void SocketClient::failAllPending(int code, const QString &msg)
     }
 }
 
-// 业务回调一律排队到下一轮事件循环再执行：回调里经常会弹模态框/嵌套事件循环，
-// 若直接在 readyRead/disconnected 等 SocketClient 信号处理栈内执行，readyRead
-// 在槽返回前不会再次发射（Qt 不递归发射），后续服务端响应会被饿死，进而引发
-// 请求超时、按钮卡死，以及回调访问已销毁对象的崩溃。
+// 业务回调排队执行，避免模态事件循环阻塞 readyRead 的后续响应。
 void SocketClient::invokeCallback(const ResponseCallback &cb, int code, const QString &msg,
                                   const QJsonObject &data)
 {
@@ -291,8 +281,7 @@ void SocketClient::onSocketError()
     m_lastError = m_socket->errorString();
     if (!m_connectInProgress)
         return; // 已建立连接上的错误：随后的 disconnected 会统一收尾
-    // 连接建立阶段失败（拒绝/不可达等）：Qt 只发 errorOccurred，不发 disconnected，
-    // 必须在此收尾，否则等待 connected 的上层流程（登录/获取验证码）会永远挂起。
+    // 连接建立失败只发 errorOccurred，须在此结束等待连接的流程。
     m_connectInProgress = false;
     m_connectTimer->stop();
     const QString reason = m_lastError.isEmpty() ? QStringLiteral("连接失败") : m_lastError;

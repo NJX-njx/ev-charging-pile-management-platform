@@ -277,7 +277,7 @@ void UserPage::onEditUser()
         return;
     const int userId = m_table->item(row, 0)->data(Qt::UserRole).toInt();
 
-    // v2.4：先查含头像的完整资料再编辑（user_list 不返回头像与精确余额以外的字段）
+    // 先查含头像的完整资料再编辑（user_list 不返回头像与精确余额以外的字段）
     m_editBtn->setEnabled(false);
     m_client->sendRequest(QStringLiteral("user_detail"), QJsonObject{{QStringLiteral("userId"), userId}},
                           [this, userId](int code, const QString &msg, const QJsonObject &data) {

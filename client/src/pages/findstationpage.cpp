@@ -439,7 +439,7 @@ void FindStationPage::reservePile(qint64 pileId, const QString &pileCode, QDialo
 {
     const QPointer<QDialog> dialogGuard(dialog);
 
-    // 协议 v2.1：预约要求余额 > 0。本地缓存余额已知且为 0 时直接拦截，不发请求
+    // 预约要求余额 > 0。本地缓存余额已知且为 0 时直接拦截，不发请求
     //（余额按分量化，<0.005 元即视为 0）；缓存未知（<0）时放行，由服务端 3004 兜底。
     if (m_knownBalance >= 0.0 && m_knownBalance < 0.005) {
         QMessageBox::warning(dialog, QStringLiteral("预约"),

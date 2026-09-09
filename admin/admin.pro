@@ -1,15 +1,15 @@
+!equals(QT_MAJOR_VERSION, 6): error("This project requires Qt 6.")
+
 QT += core gui widgets network
 
-# QtCharts 在 Ubuntu 22.04 仅 Qt5 可用；Qt6 环境下自动跳过（营收趋势页开发时需要）
-qtHaveModule(charts): QT += charts
+QT += charts
 
 CONFIG += c++17
 
 TARGET = AdminClient
 TEMPLATE = app
 
-# 就地构建时把中间产物收进 .build/、可执行文件收进 bin/；
-# 影子构建（推荐，Qt Creator 默认）下这些目录都在构建目录内，源码目录始终干净
+# 构建产物集中放在构建目录下。
 OBJECTS_DIR = .build/obj
 MOC_DIR = .build/moc
 RCC_DIR = .build/rcc

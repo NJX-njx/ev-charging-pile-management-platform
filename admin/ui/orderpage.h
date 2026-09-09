@@ -28,7 +28,7 @@ private:
     // 订单行「详情」操作列控件：loadOrders 与 FilterTable 排序后重建共用
     QWidget *createOrderOps(int row);
     void showDetail(int orderId);
-    // v2.4 管理端干预订单：按选中行状态使能「取消预约」（仅 reserved）/「停止充电」（仅 charging）
+    // 管理端干预订单：按选中行状态使能「取消预约」（仅 reserved）/「停止充电」（仅 charging）
     void updateActionButtons();
     void onCancelOrder();
     void onStopCharge();

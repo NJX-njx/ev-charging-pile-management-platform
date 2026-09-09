@@ -105,7 +105,7 @@ OrderPage::OrderPage(SocketClient *client, QWidget *parent)
     filters->addWidget(refreshBtn);
     root->addLayout(filters);
 
-    // 管理端干预订单（v2.4）：作用于选中行，按订单状态使能（reserved 可取消预约、charging 可停止充电）
+    // 管理端干预订单：作用于选中行，按订单状态使能（reserved 可取消预约、charging 可停止充电）
     QHBoxLayout *actions = new QHBoxLayout;
     actions->addStretch();
     m_cancelBtn = new QPushButton(QStringLiteral("取消预约"));

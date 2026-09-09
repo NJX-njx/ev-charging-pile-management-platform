@@ -11,7 +11,7 @@ class QTimer;
 class QVBoxLayout;
 class SocketClient;
 
-// 充电页（协议 v2.2）：active_order_get 返回未完成订单数组，每单一卡并行展示；
+// 充电页：active_order_get 返回未完成订单数组，每单一卡并行展示；
 // 卡片按状态给出操作（reserved→开始/取消，charging→停止，pending_payment→结算）；
 // charging 卡片每秒刷新「已充时长｜预计花费」（powerKw × 已充小时 × unitPrice，
 // 仅为估算展示，以实际结算为准）。进入页面、定时（15s）与每次操作后刷新整表。

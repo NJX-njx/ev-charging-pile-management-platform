@@ -33,8 +33,6 @@ public:
 private slots:
     void onAddStation();
     void onImportStations();
-    // 从 JSON 文件批量导入站点（格式同 tools/seed_stations.json），供导入按钮与自动化测试直接调用
-    void importStationsFromFile(const QString &path);
     void onAddPile();
     void onEditPile();
     void onDeletePile();
@@ -43,6 +41,8 @@ private slots:
     void onShowActiveOrder();
 
 private:
+    // 从 JSON 文件批量导入站点，格式见 tools/seed_stations.json。
+    void importStationsFromFile(const QString &path);
     void loadStations();
     // 刷新右侧电桩列表；force=true 时即使站点范围未变化也重新拉取
     void loadPiles(bool force = false);

@@ -40,7 +40,7 @@
 
 - 运行环境：VMware 17 虚拟机，Ubuntu 22.04+
 - 开发工具：Qt Creator 6.2+
-- 语言与框架：C++，Qt（QChart、QWebEngineView），SQLite，Socket 多线程编程
+- 语言与框架：C++，Qt 6.2+（QChart、QWebEngineView），SQLite，Socket 多线程编程
 - 大屏：Web 页面 + ECharts
 
 ## 目录结构
@@ -55,7 +55,7 @@ docs/     协议与设计文档
 
 ## 构建与运行
 
-各模块为独立的 Qt Creator 工程，进入对应目录用 Qt Creator 打开 `.pro` 文件构建即可。启动顺序：先启动 `server`（默认监听 8888 端口），再启动 `client` / `admin` / `web`。详细启动步骤待项目收尾时补充完整。
+仅支持 Qt 6，管理端须安装 Qt Charts。Ubuntu 命令行构建使用 `qmake6`。各模块为独立的 Qt Creator 工程，进入对应目录用 Qt Creator 打开 `.pro` 文件，选择 Qt 6 套件构建即可。启动顺序：先启动 `server`（默认监听 8888 端口），再启动 `client` / `admin` / `web`。详细启动步骤待项目收尾时补充完整。
 
 ## 通信协议
 

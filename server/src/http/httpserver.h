@@ -9,8 +9,7 @@
 
 class QTcpSocket;
 
-// Minimal HTTP/1.1 read-only JSON API (Qt 6.2 has no QHttpServer).
-// Runs on the main thread; every request is answered then the connection closes.
+// Read-only JSON API; runs on the main thread and closes each connection after responding.
 class HttpServer : public QObject
 {
     Q_OBJECT

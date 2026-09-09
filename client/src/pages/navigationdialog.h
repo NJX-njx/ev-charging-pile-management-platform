@@ -23,12 +23,13 @@ public:
                      QWidget *parent = nullptr);
 
     static bool isAvailable();
-    // 构造腾讯地图路线规划 URI（type=drive|walk）；独立出来供自动化验证断言参数
+
+private:
+    // 构造腾讯地图路线规划 URI（type=drive|walk）。
     static QUrl buildRouteUrl(const QString &type, double fromLng, double fromLat,
                               double toLng, double toLat, const QString &stationName,
                               const QString &fromDescription);
 
-private:
     void loadRoute();
 
     QString m_stationName;

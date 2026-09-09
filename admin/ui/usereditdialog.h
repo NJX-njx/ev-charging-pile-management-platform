@@ -8,7 +8,7 @@ class QLabel;
 class QLineEdit;
 class QPushButton;
 
-// 用户管理「修改用户」对话框（协议 v2.4）：以 user_detail 返回的完整资料构造，
+// 用户管理「修改用户」对话框：以 user_detail 返回的完整资料构造，
 // 支持修改手机号/昵称/余额与头像（JPEG/PNG ≤512KiB，可显式清除）。
 // updatePayload() 只收集相对初始资料发生变化的字段（user_update 要求至少提供其一）。
 class UserEditDialog : public QDialog
@@ -23,10 +23,9 @@ public:
     // 仅含改动字段的 user_update payload（不含 userId）；未做任何修改时为空对象
     QJsonObject updatePayload() const;
 
-    // 从图片文件载入新头像（JPEG/PNG，≤512KiB）：「选择图片…」按钮与自动化测试共用
-    Q_INVOKABLE bool chooseAvatarFromFile(const QString &path);
-
 private:
+    // 从图片文件载入头像（JPEG/PNG，≤512KiB）。
+    bool chooseAvatarFromFile(const QString &path);
     void refreshAvatarPreview();
 
     QLineEdit *m_phoneEdit;

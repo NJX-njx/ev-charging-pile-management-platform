@@ -10,19 +10,13 @@
 
 namespace {
 
-// 中文输入法（IME）环境兜底：课程虚拟机桌面会话使用 fcitx5（im-config 注入
-// QT_IM_MODULE=fcitx），但 Ubuntu 22.04 的 Qt6 没有对应的平台输入上下文插件
-//（fcitx5-frontend-qt6 不在 apt 源中），Qt 找不到插件后输入法整体失效，
-// 所有输入框无法输入中文。fcitx5 自带 IBus Frontend（提供 ibus 协议），而 Qt6
-// 自带 ibus 插件，因此当会话指定的模块插件缺失时回退到第一个可用插件。
-// 输入框本身的输入法不受限（各字段按类型显式设置 inputMethodHints）。
+// 会话指定的输入法插件缺失时，选择当前安装中可用的插件。
 void ensureImModulePluginAvailable()
 {
     const QDir pluginDir(QLibraryInfo::path(QLibraryInfo::PluginsPath)
                          + QStringLiteral("/platforminputcontexts"));
     const QStringList plugins = pluginDir.entryList(QDir::Files);
-    // 模块名与插件文件名不总一致（fcitx -> libfcitx5platforminputcontextplugin.so），
-    // 只在本 Qt 的插件目录内按文件名前缀匹配，不会误认其他 Qt 版本的插件
+    // 模块名可能只对应插件文件名的前缀。
     auto hasPlugin = [&plugins](const QString &module) {
         for (const QString &f : plugins)
             if (f.startsWith(QLatin1String("lib") + module, Qt::CaseInsensitive))
@@ -45,11 +39,9 @@ void ensureImModulePluginAvailable()
 
 int main(int argc, char *argv[])
 {
-    // QtWebEngineWidgets 要求：QApplication 构造前开启 GL 上下文共享，
-    // 否则部分显卡/虚拟机环境下渲染 Web 内容会崩溃
+    // WebEngine 渲染要求在创建 QApplication 前启用 GL 上下文共享。
     QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
-    // qt.webenginecontext 每次初始化打印的 GL/Chromium 参数清单只是诊断信息，
-    // 对使用者是纯噪音，默认关闭（排查 GPU 问题时临时改为 true 即可）
+    // 关闭 WebEngine 初始化参数日志。
     QLoggingCategory::setFilterRules(QStringLiteral("qt.webenginecontext.debug=false\n"
                                                     "qt.webenginecontext.info=false"));
     ensureImModulePluginAvailable();

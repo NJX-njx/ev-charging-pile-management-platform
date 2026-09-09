@@ -11,17 +11,11 @@
 
 #include "net/socketclient.h"
 
-#ifdef QT_CHARTS_LIB
 #include <QtCharts/QBarCategoryAxis>
 #include <QtCharts/QChart>
 #include <QtCharts/QChartView>
 #include <QtCharts/QLineSeries>
 #include <QtCharts/QValueAxis>
-// QT_CHARTS_USE_NAMESPACE 仅 Qt5 提供；Qt6 的 QtCharts 类在全局命名空间
-#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
-QT_CHARTS_USE_NAMESPACE
-#endif
-#endif
 
 SalesPage::SalesPage(SocketClient *client, QWidget *parent)
     : QWidget(parent), m_client(client)
@@ -46,19 +40,12 @@ SalesPage::SalesPage(SocketClient *client, QWidget *parent)
     controls->addStretch();
     root->addLayout(controls);
 
-#ifdef QT_CHARTS_LIB
     QChartView *chartView = new QChartView;
     chartView->setRenderHint(QPainter::Antialiasing);
     QChart *chart = new QChart;
     chart->setTitle(QStringLiteral("营收趋势"));
     chartView->setChart(chart);
     m_chartArea = chartView;
-#else
-    QLabel *placeholder = new QLabel(QStringLiteral("当前 Qt 环境不含 QtCharts 模块，趋势图不可用"));
-    placeholder->setAlignment(Qt::AlignCenter);
-    placeholder->setFrameShape(QFrame::StyledPanel);
-    m_chartArea = placeholder;
-#endif
     root->addWidget(m_chartArea, 1);
 
     connect(refreshBtn, &QPushButton::clicked, this, &SalesPage::refresh);
@@ -102,7 +89,6 @@ void SalesPage::refresh()
 
 void SalesPage::updateTrend(int range)
 {
-#ifdef QT_CHARTS_LIB
     QJsonObject payload;
     payload[QStringLiteral("range")] = range;
     m_client->sendRequest(QStringLiteral("revenue_trend"), payload,
@@ -136,7 +122,4 @@ void SalesPage::updateTrend(int range)
 
                               static_cast<QChartView *>(m_chartArea)->setChart(chart);
                           });
-#else
-    Q_UNUSED(range);
-#endif
 }
