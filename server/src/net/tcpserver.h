@@ -3,8 +3,8 @@
 
 #include <QTcpServer>
 
-// Accepts sockets on the listening thread and hands each descriptor
-// to a dedicated worker QThread (classic Qt per-connection threading).
+// 监听线程接收连接，将套接字描述符交给独立工作线程。
+// 每个连接对应一个工作线程。
 class TcpServer : public QTcpServer
 {
     Q_OBJECT

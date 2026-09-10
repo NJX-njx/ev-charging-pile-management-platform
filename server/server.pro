@@ -1,5 +1,3 @@
-!equals(QT_MAJOR_VERSION, 6): error("This project requires Qt 6.")
-
 QT += core network sql
 CONFIG += console c++17
 CONFIG -= app_bundle

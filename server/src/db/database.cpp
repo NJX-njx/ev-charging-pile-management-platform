@@ -167,7 +167,7 @@ QSqlDatabase Database::connection(const QString &name)
     QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), name);
     db.setDatabaseName(g_dbPath);
     if (!db.open()) {
-        qWarning() << "failed to open database:" << db.lastError().text();
+        qWarning() << "打开数据库失败：" << db.lastError().text();
         return db;
     }
     applyPragmas(db, nullptr);

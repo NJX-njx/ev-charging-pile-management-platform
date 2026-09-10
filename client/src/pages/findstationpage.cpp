@@ -159,12 +159,6 @@ FindStationPage::FindStationPage(SocketClient *client, QWidget *parent)
     addrRow->addWidget(m_geocodeButton, 0);
     searchLayout->addLayout(addrRow);
 
-    if (!MapBridge::isConfigured()) {
-        auto *mapHint = new QLabel(QStringLiteral("未配置腾讯地图 Key，地址解析不可用；可用区域下拉或手动经纬度定位"), searchCard);
-        mapHint->setObjectName(QStringLiteral("hint"));
-        mapHint->setWordWrap(true);
-        searchLayout->addWidget(mapHint);
-    }
 
     auto *coordRow = new QHBoxLayout();
     m_lngEdit = new QLineEdit(searchCard);
@@ -245,24 +239,19 @@ void FindStationPage::onGeocodeClicked()
         QMessageBox::warning(this, QStringLiteral("解析地址"), QStringLiteral("请输入区域或地址"));
         return;
     }
-    if (!MapBridge::isConfigured()) {
-        QMessageBox::warning(this, QStringLiteral("解析地址"),
-                             QStringLiteral("未配置腾讯地图 Key，请改用手动经纬度输入"));
-        return;
-    }
     if (!m_map)
         m_map = new MapBridge(this);
     setBusy(true);
-    m_map->geocode(address, [this, address](bool ok, double lng, double lat, const QString &error) {
+    m_map->geocode(address, [this, address](const GeocodeResult &result) {
         setBusy(false);
-        if (!ok) {
-            QMessageBox::warning(this, QStringLiteral("解析地址"), error);
+        if (!result.ok) {
+            QMessageBox::warning(this, QStringLiteral("解析地址"), result.error);
             return;
         }
-        m_lngEdit->setText(QString::number(lng, 'f', 6));
-        m_latEdit->setText(QString::number(lat, 'f', 6));
+        m_lngEdit->setText(QString::number(result.lng, 'f', 6));
+        m_latEdit->setText(QString::number(result.lat, 'f', 6));
         m_lastLocationDesc = address;
-        searchNearby(lng, lat);
+        searchNearby(result.lng, result.lat);
     });
 }
 
@@ -502,17 +491,12 @@ void FindStationPage::reservePile(qint64 pileId, const QString &pileCode, QDialo
 
 void FindStationPage::onNavigateToStation(const Station &station)
 {
-    if (!NavigationDialog::isAvailable()) {
-        QMessageBox::information(this, QStringLiteral("导航"),
-                                 QStringLiteral("当前构建未包含地图组件或未配置腾讯地图 Key，无法导航"));
-        return;
-    }
     if (!m_hasLastCoord) {
         QMessageBox::information(this, QStringLiteral("导航"),
                                  QStringLiteral("请先选择区域、解析地址或输入经纬度，作为导航起点"));
         return;
     }
-    // 非模态 + WA_DeleteOnClose；QWebEngineView 在点击「导航」按钮时才创建并加载路线
+    // 非模态地图窗口关闭时自动销毁。
     auto *dialog = new NavigationDialog(station.name, m_lastLng, m_lastLat, m_lastLocationDesc,
                                         station.lng, station.lat, this);
     dialog->show();

@@ -26,7 +26,7 @@
 
 ## 技术栈与版本
 
-- C++，仅支持 Qt 6.2 及以上的 Qt 6（Qt Creator 工程，qmake `.pro`）。管理端须安装 Qt Charts；构建时选择 Qt 6 套件。
+- C++，仅支持 Qt 6.2 及以上的 Qt 6（Qt Creator 工程，qmake `.pro`）。管理端须安装 Qt Charts，用户端须安装 Qt WebEngineWidgets；直接链接依赖，构建时选择 Qt 6 套件。
 - 依赖限定：Qt 自带模块（QtNetwork、QtSql、QtCharts、QtWebEngineWidgets）与 SQLite。**引入任何第三方库前先与团队确认**。
 - 目标运行环境：Ubuntu 22.04 虚拟机（开发环境为 VMware 虚拟机），代码不得依赖 macOS/Windows 专有特性。
 
@@ -66,4 +66,4 @@ mkdir build-server && cd build-server && qmake6 ../server/server.pro && make -j$
 
 ## 当前状态
 
-`docs/` 含通信协议、项目说明书、需求矩阵（共 51 项，按模块归组：NO.1~3 项目基础、4~18 充电用户端、19~41 运营管理端、42~48 服务端、49~50 Web 数据展示、51 项目收尾）与视觉规范。`server/`（多线程 Socket 服务端 + HTTP 只读接口）、`client/`（Qt 用户端：登录/找站/导航/充电多订单/我的）、`admin/`（Qt 管理端五个导航页：销售业绩/站点与电桩/用户管理/订单管理/系统管理；站点与电桩为左右联动合并页，顶部并入全站电桩状态总览条、右栏可切「全部站点」查看全部电桩，各列表经 `ui/filtertable.*` 提供 Excel 式筛选排序）三个模块均已完成开发并合入 `main`，当前协议版本为 **v2.5**（v2.4：`charge_stop` 即释放电桩、待结算不再占桩；`pile_list` 附 `occupancy` 区分预约/充电占用；`user_update` 支持头像与余额、新增 `user_detail` 与 `admin_order_cancel`/`admin_order_stop`；`pile_restart`/`pile_disable` 放开到 `in_use` 并强制终结占用订单。v2.5：`station_add` 改为调用方显式提交 `piles` 数组，`pileCount` 移除，服务端不再生成电桩；`tools/seed_stations.json` 为逐桩明细。另：客户端导航页有 profile 析构顺序崩溃修复、鼠标转触摸脚本与 WebEngine 噪音日志过滤）。三端已完成联调；仓库不保留测试专用代码。注意：服务端已移除全部数据库迁移/兼容代码，旧结构数据库需手工删除测试库文件后重启。剩余：Web 大屏前端页面（NO.49/50）与项目收尾（NO.51）。创建新模块目录时遵循上表结构，不要另起顶层目录。
+服务端、Qt 用户端、Qt 管理端已实现；Web 大屏前端尚未实现，服务端已提供只读网页接口。地图采用原生地址解析和应用内嵌路线导航，详情见 README.md。项目界面提示、日志及说明性注释使用中文，通信协议保持原样。依赖直接链接，不保留缺库降级或测试专用代码，保留输入法插件探测；仅中文化项目自有输出，不修改 Qt 自带文案。种子站点坐标尚需逐站校验，数据库结构不支持自动迁移。逐功能、逐文件答辩说明见 docs/答辩代码导读.md。

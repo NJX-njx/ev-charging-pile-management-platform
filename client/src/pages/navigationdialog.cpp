@@ -10,7 +10,6 @@
 #include <QUrlQuery>
 #include <QVBoxLayout>
 
-#ifdef EVCP_HAVE_WEBENGINE
 #include <QWebEnginePage>
 #include <QWebEngineProfile>
 #include <QWebEngineScript>
@@ -36,16 +35,6 @@ protected:
 };
 
 } // namespace
-#endif
-
-bool NavigationDialog::isAvailable()
-{
-#ifdef EVCP_HAVE_WEBENGINE
-    return !mapconfig::kTencentMapKey.isEmpty();
-#else
-    return false;
-#endif
-}
 
 QUrl NavigationDialog::buildRouteUrl(const QString &type, double fromLng, double fromLat,
                                      double toLng, double toLat, const QString &stationName,
@@ -140,10 +129,6 @@ NavigationDialog::NavigationDialog(const QString &stationName, double fromLng, d
     m_navButton->setProperty("class", QStringLiteral("primary"));
     layout->addWidget(m_navButton);
 
-#ifndef EVCP_HAVE_WEBENGINE
-    m_navButton->setEnabled(false);
-    placeholder->setText(QStringLiteral("当前构建未包含地图组件，无法展示路线"));
-#endif
 
     connect(closeButton, &QPushButton::clicked, this, &QDialog::accept);
     connect(m_navButton, &QPushButton::clicked, this, &NavigationDialog::loadRoute);
@@ -172,7 +157,6 @@ NavigationDialog::NavigationDialog(const QString &stationName, double fromLng, d
 
 void NavigationDialog::loadRoute()
 {
-#ifdef EVCP_HAVE_WEBENGINE
     if (!m_view) {
         m_view = new QWebEngineView(m_stack);
         // 独立 profile 使用移动端 UA，避免影响定位页。
@@ -233,5 +217,4 @@ void NavigationDialog::loadRoute()
                                m_stationName, m_fromDescription));
     m_stack->setCurrentWidget(m_view);
     m_loaded = true;
-#endif
 }

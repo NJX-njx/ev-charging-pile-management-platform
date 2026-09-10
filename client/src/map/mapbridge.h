@@ -1,31 +1,22 @@
 #pragma once
-
 #include <QObject>
-
 #include <functional>
+class QNetworkAccessManager;
 
-class QWebEnginePage;
-
-class MapBridge : public QObject
-{
+// 地址解析结果保留匹配地点，便于用户核对。
+struct GeocodeResult {
+    bool ok = false;
+    double lng = 0;
+    double lat = 0;
+    QString title;
+    QString error;
+};
+class MapBridge : public QObject {
     Q_OBJECT
 public:
-    using GeocodeCallback = std::function<void(bool ok, double lng, double lat, const QString &error)>;
-
+    using GeocodeCallback = std::function<void(const GeocodeResult &)>;
     explicit MapBridge(QObject *parent = nullptr);
-    ~MapBridge() override;
-
-    static bool isConfigured();
-    bool isReady() const;
     void geocode(const QString &address, GeocodeCallback cb);
-
 private:
-    void ensurePage();
-    void runPending();
-    void failPending(const QString &error);
-
-    QWebEnginePage *m_page = nullptr;
-    bool m_ready = false;
-    QString m_pendingAddress;
-    GeocodeCallback m_cb;
+    QNetworkAccessManager *m_network;
 };

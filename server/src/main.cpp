@@ -45,22 +45,22 @@ int main(int argc, char *argv[])
 
     QCommandLineParser parser;
     parser.setApplicationDescription(
-        QStringLiteral("EV charging pile management platform socket server"));
+        QStringLiteral("电动汽车充电桩管理平台服务端"));
     parser.addHelpOption();
     const QCommandLineOption tcpPort(QStringLiteral("tcp-port"),
-                                     QStringLiteral("TCP listen port"), QStringLiteral("port"),
+                                     QStringLiteral("业务接口监听端口"), QStringLiteral("port"),
                                      QStringLiteral("8888"));
     const QCommandLineOption httpPort(QStringLiteral("http-port"),
-                                      QStringLiteral("HTTP listen port"), QStringLiteral("port"),
+                                      QStringLiteral("网页接口监听端口"), QStringLiteral("port"),
                                       QStringLiteral("8080"));
     const QCommandLineOption tcpHost(QStringLiteral("tcp-host"),
-                                     QStringLiteral("TCP bind address"), QStringLiteral("address"),
+                                     QStringLiteral("业务接口监听地址"), QStringLiteral("address"),
                                      QStringLiteral("0.0.0.0"));
     const QCommandLineOption httpHost(QStringLiteral("http-host"),
-                                      QStringLiteral("HTTP bind address"),
+                                      QStringLiteral("网页接口监听地址"),
                                       QStringLiteral("address"), QStringLiteral("127.0.0.1"));
     const QCommandLineOption dbPath(QStringLiteral("db"),
-                                    QStringLiteral("SQLite database file path"),
+                                    QStringLiteral("数据库文件路径"),
                                     QStringLiteral("path"), QStringLiteral("./charging.db"));
     parser.addOption(tcpPort);
     parser.addOption(httpPort);
@@ -72,36 +72,36 @@ int main(int argc, char *argv[])
     quint16 tcpPortValue = 0, httpPortValue = 0;
     if (!parsePort(parser, tcpPort, 8888, tcpPortValue)
         || !parsePort(parser, httpPort, 8080, httpPortValue)) {
-        qCritical() << "invalid port argument";
+        qCritical() << "端口参数无效";
         return 1;
     }
     QHostAddress tcpAddress, httpAddress;
     if (!parseAddress(parser.value(tcpHost), tcpAddress)
         || !parseAddress(parser.value(httpHost), httpAddress)) {
-        qCritical() << "invalid host argument";
+        qCritical() << "监听地址参数无效";
         return 1;
     }
 
     Database::configure(parser.value(dbPath));
     QString error;
     if (!Database::initialize(&error)) {
-        qCritical() << "failed to initialize database:" << error;
+        qCritical() << "初始化数据库失败：" << error;
         return 1;
     }
 
     TcpServer tcpServer;
     if (!tcpServer.listen(tcpAddress, tcpPortValue)) {
-        qCritical() << "failed to listen on TCP" << tcpAddress.toString() << tcpPortValue
+        qCritical() << "业务接口监听失败" << tcpAddress.toString() << tcpPortValue
                     << ":" << tcpServer.errorString();
         return 1;
     }
     HttpServer httpServer;
     if (!httpServer.listenOn(httpAddress, httpPortValue)) {
-        qCritical() << "failed to listen on HTTP" << httpAddress.toString() << httpPortValue;
+        qCritical() << "网页接口监听失败" << httpAddress.toString() << httpPortValue;
         return 1;
     }
-    qInfo() << "TCP listening on" << tcpAddress.toString() << tcpPortValue;
-    qInfo() << "HTTP listening on" << httpAddress.toString() << httpPortValue;
-    qInfo() << "database:" << parser.value(dbPath);
+    qInfo() << "业务接口正在监听" << tcpAddress.toString() << tcpPortValue;
+    qInfo() << "网页接口正在监听" << httpAddress.toString() << httpPortValue;
+    qInfo() << "数据库路径：" << parser.value(dbPath);
     return app.exec();
 }

@@ -9,7 +9,7 @@
 
 class QTcpSocket;
 
-// Read-only JSON API; runs on the main thread and closes each connection after responding.
+// 只读数据接口在主线程运行，每次响应完成后关闭连接。
 class HttpServer : public QObject
 {
     Q_OBJECT

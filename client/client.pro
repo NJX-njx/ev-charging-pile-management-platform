@@ -1,5 +1,3 @@
-!equals(QT_MAJOR_VERSION, 6): error("This project requires Qt 6.")
-
 QT += core gui widgets network
 
 CONFIG += c++17
@@ -17,10 +15,7 @@ DESTDIR = bin
 
 INCLUDEPATH += src
 
-qtHaveModule(webenginewidgets) {
-    QT += webenginewidgets
-    DEFINES += EVCP_HAVE_WEBENGINE
-}
+QT += webenginewidgets
 
 SOURCES += \
     src/main.cpp \

@@ -5,7 +5,7 @@
 #include <QJsonValue>
 #include <QSqlQuery>
 
-// code/msg/data triplet returned by every business handler; invalid data means null.
+// 业务处理结果由状态码、提示和数据组成；没有数据时返回空值。
 struct Response {
     int code = 0;
     QString msg;
@@ -28,7 +28,7 @@ bool readInt(const QJsonObject &obj, const QString &key, qint64 min, qint64 max,
 bool readMoneyFen(const QJsonObject &obj, const QString &key, qint64 maxFen, qint64 &outFen);
 bool readLngLat(const QJsonObject &obj, double &lng, double &lat);
 
-// Password rules: 6-20 chars, no whitespace. Records are stored as "saltHex:sha256Hex".
+// 密码为6至20位非空白字符，数据库保存盐值与摘要。
 bool isValidPassword(const QString &password);
 QString passwordRecord(const QString &password);
 bool verifyPassword(const QString &record, const QString &password);
@@ -37,7 +37,7 @@ QJsonObject userJson(const QSqlQuery &q, bool withAvatar);
 QJsonObject stationSummaryJson(const QSqlQuery &q);
 QJsonObject pileJson(const QSqlQuery &q);
 QJsonObject orderJson(const QSqlQuery &q);
-// Same row shape as kOrderSelect plus p.powerKw at index 14 and u.phone at 15.
+// 订单基础字段后追加电桩功率和用户手机号。
 QJsonObject adminOrderJson(const QSqlQuery &q);
 
 extern const char *const kUserSelect;

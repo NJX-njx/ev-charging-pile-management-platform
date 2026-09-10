@@ -36,7 +36,7 @@ bool exec(QSqlQuery &q)
 {
     if (q.exec())
         return true;
-    qWarning() << "SQL error:" << q.lastError().text();
+    qWarning() << "数据库执行失败：" << q.lastError().text();
     return false;
 }
 
@@ -70,7 +70,7 @@ bool readPowerKw(const QJsonObject &p, double &out)
     return true;
 }
 
-// Returns the date for an optional "yyyy-MM-dd" payload field; present=false when absent/null.
+// 解析可选日期；字段缺省或为空时标记为未提供。
 bool readDate(const QJsonObject &p, const QString &key, QDate &out, bool &present)
 {
     present = p.contains(key) && !p.value(key).isNull();
@@ -89,7 +89,7 @@ bool readDate(const QJsonObject &p, const QString &key, QDate &out, bool &presen
     return true;
 }
 
-// Optional includeDeleted flag (admin lists only): absent means false.
+// 管理端列表可选择包含已删除记录，默认不包含。
 bool readIncludeDeleted(const QJsonObject &p, bool &out)
 {
     out = false;
@@ -103,7 +103,7 @@ bool readIncludeDeleted(const QJsonObject &p, bool &out)
 
 enum class CodeCheck { Ok, Mismatch, DbError };
 
-// One-time SMS-style code: consumed on success; expired rows are removed lazily.
+// 验证码使用成功后作废，查询时清理过期记录。
 CodeCheck consumeSmsCode(QSqlDatabase db, const QString &phone, const QString &code)
 {
     QSqlQuery q(db);
@@ -127,7 +127,7 @@ CodeCheck consumeSmsCode(QSqlDatabase db, const QString &phone, const QString &c
     return CodeCheck::Ok;
 }
 
-// Column 13 of kOrderSelect is o.userId, used for ownership checks only.
+// 订单查询结果的第十四列为用户编号，用于检查订单归属。
 Response loadOrder(QSqlDatabase db, qint64 orderId, QSqlQuery &q)
 {
     q = QSqlQuery(db);
@@ -197,8 +197,8 @@ Response hUserLogin(const QJsonObject &p, Session &s, QSqlDatabase db)
     if (byPassword == byCode)
         return fail(2001, QStringLiteral("provide either password or code"));
 
-    // A phone held only by deleted users is treated as unknown: login auto-registers
-    // a brand-new account (1005 is only for existing sessions of a deleted account).
+    // 仅被已删除账号使用的手机号，登录时会注册为新账号。
+    // 已删除账号的现存会话返回账号已删除错误。
     QSqlQuery q(db);
     q.prepare(QString::fromLatin1(Protocol::kUserSelect)
               + QStringLiteral(" WHERE phone = ? AND deleted = 0"));
@@ -256,8 +256,8 @@ Response hCodeRequest(const QJsonObject &p, Session &, QSqlDatabase db)
     const QString phone = p.value(QStringLiteral("phone")).toString();
     if (!validPhone(phone))
         return fail(2001, QStringLiteral("invalid phone"));
-    // Unknown phones (including ones held only by deleted users) also get a code:
-    // it is what lets the auto-registration login verify them.
+    // 未注册手机号也允许获取验证码，以支持登录时自动注册。
+
     const QString code = QStringLiteral("%1")
         .arg(QRandomGenerator::global()->bounded(1000000), 6, 10, QLatin1Char('0'));
     QSqlQuery up(db);
@@ -1361,7 +1361,7 @@ Response hStationAdd(const QJsonObject &p, Session &, QSqlDatabase db)
             // 并发插入撞上 code 的列级 UNIQUE 约束同样按编号冲突处理。
             if (pileIns.lastError().text().contains(QLatin1String("UNIQUE")))
                 return fail(2001, QStringLiteral("code already exists"));
-            qWarning() << "SQL error:" << pileIns.lastError().text();
+            qWarning() << "数据库执行失败：" << pileIns.lastError().text();
             return fail(5000, QStringLiteral("internal error"));
         }
     }
@@ -1430,7 +1430,7 @@ Response hStationUpdate(const QJsonObject &p, Session &, QSqlDatabase db)
         sets.append(QStringLiteral("priceFenPerKwh = ?"));
         binds.append(priceFen);
     }
-    // lng/lat are intentionally not updatable; submitted values are ignored.
+    // 站点经纬度不允许修改，提交的坐标字段会被忽略。
     QSqlQuery upd(db);
     upd.prepare(QStringLiteral("UPDATE stations SET ") + sets.join(QStringLiteral(", "))
                 + QStringLiteral(" WHERE stationId = ?"));
@@ -2053,7 +2053,7 @@ Response hAdminAdd(const QJsonObject &p, Session &, QSqlDatabase db)
         // 并发插入撞上 username 的 UNIQUE 约束同样按冲突处理。
         if (ins.lastError().text().contains(QLatin1String("UNIQUE")))
             return fail(2001, QStringLiteral("username already exists"));
-        qWarning() << "SQL error:" << ins.lastError().text();
+        qWarning() << "数据库执行失败：" << ins.lastError().text();
         return fail(5000, QStringLiteral("internal error"));
     }
     QJsonObject data;
@@ -2096,7 +2096,7 @@ Response hAdminDelete(const QJsonObject &p, Session &s, QSqlDatabase db)
 using Handler = Response (*)(const QJsonObject &, Session &, QSqlDatabase );
 
 struct MessageDef {
-    int roles; // bit 1 = user, bit 2 = admin, 0 = no login required
+    int roles; // 权限位：1为用户，2为管理员，0为无需登录
     Handler handler;
 };
 

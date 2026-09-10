@@ -1,5 +1,3 @@
-!equals(QT_MAJOR_VERSION, 6): error("This project requires Qt 6.")
-
 QT += core gui widgets network
 
 QT += charts

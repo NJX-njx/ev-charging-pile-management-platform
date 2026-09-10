@@ -5,7 +5,7 @@
 #include <QJsonObject>
 #include <QSqlDatabase>
 
-// Aggregations shared by the admin TCP messages and the read-only HTTP API.
+// 管理端消息和只读网页接口共用的统计查询。
 namespace Stats {
 
 QJsonObject revenueSummary(const QSqlDatabase &db);

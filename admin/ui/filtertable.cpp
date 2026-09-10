@@ -64,7 +64,7 @@ bool itemLess(const QTableWidgetItem *a, const QTableWidgetItem *b)
 
 } // namespace
 
-// ---------------- FilterHeaderView ----------------
+// 自定义表头
 
 FilterHeaderView::FilterHeaderView(Qt::Orientation orientation, QWidget *parent)
     : QHeaderView(orientation, parent)
@@ -226,7 +226,7 @@ void FilterHeaderView::mouseMoveEvent(QMouseEvent *event)
     QHeaderView::mouseMoveEvent(event);
 }
 
-// ---------------- FilterTable ----------------
+// 表格筛选排序
 
 FilterTable::FilterTable(QTableWidget *table, QObject *parent)
     : QObject(parent), m_table(table)

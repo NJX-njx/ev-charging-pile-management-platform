@@ -22,7 +22,7 @@ qint64 scalarSum(const QSqlDatabase &db, const QString &column,
         q.addBindValue(toExclusive);
     }
     if (!q.exec() || !q.next()) {
-        qWarning() << "stats query failed:" << q.lastError().text();
+        qWarning() << "统计查询失败：" << q.lastError().text();
         return 0;
     }
     return q.value(0).toLongLong();
@@ -40,7 +40,7 @@ qint64 scalarCount(const QSqlDatabase &db, qint64 fromInclusive, qint64 toExclus
         q.addBindValue(toExclusive);
     }
     if (!q.exec() || !q.next()) {
-        qWarning() << "stats query failed:" << q.lastError().text();
+        qWarning() << "统计查询失败：" << q.lastError().text();
         return 0;
     }
     return q.value(0).toLongLong();
@@ -84,7 +84,7 @@ QJsonObject Stats::revenueTrend(const QSqlDatabase &db, int range)
                 sums[static_cast<int>(index)] += q.value(1).toLongLong();
         }
     } else {
-        qWarning() << "stats query failed:" << q.lastError().text();
+        qWarning() << "统计查询失败：" << q.lastError().text();
     }
     QJsonArray points;
     for (int i = 0; i < range; ++i) {
@@ -116,7 +116,7 @@ QJsonObject Stats::pileStatusOverview(const QSqlDatabase &db)
                 fault = count;
         }
     } else {
-        qWarning() << "stats query failed:" << q.lastError().text();
+        qWarning() << "统计查询失败：" << q.lastError().text();
     }
     QJsonObject obj;
     obj.insert(QStringLiteral("total"), idle + inUse + fault);
@@ -136,7 +136,7 @@ QJsonArray Stats::stationSummaries(const QSqlDatabase &db)
         while (q.next())
             out.append(Protocol::stationSummaryJson(q));
     } else {
-        qWarning() << "stats query failed:" << q.lastError().text();
+        qWarning() << "统计查询失败：" << q.lastError().text();
     }
     return out;
 }

@@ -8,7 +8,7 @@
 
 class QTcpSocket;
 
-// Lives in its own QThread; owns the socket, the receive buffer and the session.
+// 在独立线程中维护套接字、接收缓冲区和登录会话。
 class Connection : public QObject
 {
     Q_OBJECT
